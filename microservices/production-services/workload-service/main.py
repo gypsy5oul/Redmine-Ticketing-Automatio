@@ -212,6 +212,22 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 async def health_check():
     return {"service": settings.SERVICE_NAME, "status": "healthy"}
 
+@app.get("/api/v1/workload", tags=["Workload"])
+async def get_workload(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    level: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get workload overview (alias for /team endpoint) - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/workload")
+    try:
+        manager = WorkloadManager(db)
+        workload = manager.get_team_workload(level)
+        return {"success": True, "count": len(workload), "workload": workload}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/v1/workload/team", tags=["Workload"])
 async def get_team_workload(
     user: User = Depends(get_current_user),
