@@ -800,6 +800,41 @@ async def delete_comment(comment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================================
+# LEGACY ENDPOINTS (Phase 2)
+# ============================================================================
+
+@app.post("/process-tickets", tags=["Tickets - Legacy"])
+async def process_tickets_legacy(ticket_data: dict = None, db: Session = Depends(get_db)):
+    """
+    Legacy endpoint for backward compatibility
+
+    Source: /backend/app/main.py:751-766
+
+    DEPRECATED: Use /api/v1/tickets/process instead
+    This endpoint exists for backward compatibility with old integrations
+    """
+    try:
+        logger.warning("⚠️ Legacy endpoint /process-tickets called - please update to /api/v1/tickets/process")
+
+        if ticket_data:
+            # Single ticket processing
+            result = await process_ticket(ticket_data, db)
+            return result
+        else:
+            # Batch processing mode (fetch from Redmine and process all)
+            return {
+                "success": True,
+                "message": "Batch processing not yet implemented in microservices. Use single ticket mode with ticket_data parameter.",
+                "processed": 0,
+                "note": "For batch processing, call /api/v1/tickets/process with ticket_data for each ticket"
+            }
+
+    except Exception as e:
+        logger.error(f"❌ Legacy process tickets failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # STARTUP
 # ============================================================================
 
