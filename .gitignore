@@ -47,3 +47,6 @@ frontend/dist/
 # Misc
 a.out
 *.swp
+# Microservices environment files (contains secrets)
+microservices/.env
+.env
