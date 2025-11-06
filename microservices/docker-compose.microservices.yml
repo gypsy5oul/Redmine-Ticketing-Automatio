@@ -128,9 +128,11 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: 0
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8001
     ports:
       - "8001:8001"
@@ -155,13 +157,16 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: 0
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
       REDMINE_BASE_URL: ${REDMINE_BASE_URL}
       REDMINE_API_KEY: ${REDMINE_API_KEY}
       LLM_ENABLED: ${LLM_ENABLED:-true}
       LLM_BASE_URL: ${LLM_BASE_URL}
       LLM_MODEL: ${LLM_MODEL}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8002
     ports:
       - "8002:8002"
@@ -186,8 +191,11 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: 0
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8003
     ports:
       - "8003:8003"
@@ -212,8 +220,11 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: 0
       SECRET_KEY: ${SECRET_KEY}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8004
     ports:
       - "8004:8004"
@@ -238,7 +249,10 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_DB: 0
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8005
     ports:
       - "8005:8005"
@@ -261,6 +275,12 @@ services:
     container_name: analytics-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8006
     ports:
       - "8006:8006"
@@ -283,6 +303,12 @@ services:
     container_name: escalation-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8007
     ports:
       - "8007:8007"
@@ -305,6 +331,12 @@ services:
     container_name: collaboration-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8008
     ports:
       - "8008:8008"
@@ -328,6 +360,9 @@ services:
     environment:
       REDMINE_BASE_URL: ${REDMINE_BASE_URL}
       REDMINE_API_KEY: ${REDMINE_API_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8009
     ports:
       - "8009:8009"
@@ -349,6 +384,12 @@ services:
     container_name: scheduling-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8010
     ports:
       - "8010:8010"
@@ -372,6 +413,12 @@ services:
     container_name: project-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SERVICE_PORT: 8011
     ports:
       - "8011:8011"
