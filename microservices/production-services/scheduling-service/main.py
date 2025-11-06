@@ -12,19 +12,33 @@ Source: /backend/app/scheduler/scheduler.py
 """
 
 import os
+import sys
 import httpx
 from datetime import datetime, timezone, date, timedelta
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, Date, Time, func, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
-from loguru import logger
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from contextlib import asynccontextmanager
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    log_error,
+    get_current_user,
+    require_admin,
+    require_manager,
+    User
+)
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets")
@@ -834,6 +848,9 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Setup enhanced logging with request tracking
+logger = setup_logging("scheduling-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -1123,6 +1140,8 @@ class OnCallReplaceRequest(BaseModel):
 
 @app.get("/api/v1/shifts", tags=["Shifts"])
 async def get_shifts_v1(
+    user: User = Depends(require_manager),
+    request: Request = None,
     team_level: Optional[str] = Query(None),
     member_id: Optional[int] = Query(None),
     include_inactive: bool = Query(False),
@@ -1132,7 +1151,9 @@ async def get_shifts_v1(
     """
     Get shift assignments
     Supports grouped view for frontend
+    Requires: Manager, Admin, or Super Admin role
     """
+    log_request(logger, request, user.id, "GET /api/v1/shifts")
     try:
         from sqlalchemy import Table, MetaData, and_
 
@@ -1226,8 +1247,14 @@ async def get_shifts_v1(
 
 
 @app.post("/api/v1/shifts", tags=["Shifts"])
-async def create_shift_v1(payload: dict, db: Session = Depends(get_db)):
-    """Create new shift assignment"""
+async def create_shift_v1(
+    user: User = Depends(require_admin),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Create new shift assignment - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, "POST /api/v1/shifts")
     try:
         shift = ShiftAssignment(
             team_member_id=payload.get("team_member_id"),
@@ -1266,8 +1293,15 @@ async def create_shift_v1(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.put("/api/v1/shifts/{shift_id}", tags=["Shifts"])
-async def update_shift_v1(shift_id: int, payload: dict, db: Session = Depends(get_db)):
-    """Update existing shift"""
+async def update_shift_v1(
+    shift_id: int,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Update existing shift - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"PUT /api/v1/shifts/{shift_id}")
     try:
         shift = db.query(ShiftAssignment).filter(ShiftAssignment.id == shift_id).first()
         if not shift:
@@ -1315,8 +1349,14 @@ async def update_shift_v1(shift_id: int, payload: dict, db: Session = Depends(ge
 
 
 @app.delete("/api/v1/shifts/{shift_id}", tags=["Shifts"])
-async def delete_shift_v1(shift_id: int, db: Session = Depends(get_db)):
-    """Delete shift assignment"""
+async def delete_shift_v1(
+    shift_id: int,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Delete shift assignment - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"DELETE /api/v1/shifts/{shift_id}")
     try:
         shift = db.query(ShiftAssignment).filter(ShiftAssignment.id == shift_id).first()
         if not shift:
@@ -1342,12 +1382,15 @@ async def delete_shift_v1(shift_id: int, db: Session = Depends(get_db)):
 
 @app.get("/api/v1/leaves", tags=["Leaves"])
 async def get_leaves_v1(
+    user: User = Depends(require_manager),
+    request: Request = None,
     team_level: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     include_past: bool = Query(False),
     db: Session = Depends(get_db)
 ):
-    """Get all leave requests (for managers)"""
+    """Get all leave requests - Requires: Manager, Admin, or Super Admin role"""
+    log_request(logger, request, user.id, "GET /api/v1/leaves")
     try:
         from sqlalchemy import Table, MetaData
 
@@ -1405,10 +1448,13 @@ async def get_leaves_v1(
 
 @app.get("/api/v1/leaves/me", tags=["Leaves"])
 async def get_my_leaves_v1(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     include_past: bool = Query(True),
     db: Session = Depends(get_db)
 ):
-    """Get my leave requests (all users can call this)"""
+    """Get my leave requests - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/leaves/me")
     try:
         # In microservices, we don't have current_user context
         # This endpoint returns all leaves for now
@@ -1444,8 +1490,14 @@ async def get_my_leaves_v1(
 
 
 @app.post("/api/v1/leaves", tags=["Leaves"])
-async def create_leave_v1(payload: dict, db: Session = Depends(get_db)):
-    """Create leave request"""
+async def create_leave_v1(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Create leave request - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "POST /api/v1/leaves")
     try:
         leave = MemberLeave(
             team_member_id=payload.get("team_member_id"),
@@ -1480,8 +1532,15 @@ async def create_leave_v1(payload: dict, db: Session = Depends(get_db)):
 
 
 @app.put("/api/v1/leaves/{leave_id}", tags=["Leaves"])
-async def update_leave_v1(leave_id: int, payload: dict, db: Session = Depends(get_db)):
-    """Update leave request"""
+async def update_leave_v1(
+    leave_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Update leave request - Requires: Any authenticated user (with ownership check)"""
+    log_request(logger, request, user.id, f"PUT /api/v1/leaves/{leave_id}")
     try:
         leave = db.query(MemberLeave).filter(MemberLeave.id == leave_id).first()
         if not leave:
@@ -1524,8 +1583,14 @@ async def update_leave_v1(leave_id: int, payload: dict, db: Session = Depends(ge
 
 
 @app.delete("/api/v1/leaves/{leave_id}", tags=["Leaves"])
-async def delete_leave_v1(leave_id: int, db: Session = Depends(get_db)):
-    """Delete leave request"""
+async def delete_leave_v1(
+    leave_id: int,
+    user: User = Depends(require_manager),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Delete leave request - Requires: Manager, Admin, or Super Admin role"""
+    log_request(logger, request, user.id, f"DELETE /api/v1/leaves/{leave_id}")
     try:
         leave = db.query(MemberLeave).filter(MemberLeave.id == leave_id).first()
         if not leave:
@@ -1546,8 +1611,15 @@ async def delete_leave_v1(leave_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/leaves/{leave_id}/status", tags=["Leaves"])
-async def update_leave_status_v1(leave_id: int, payload: dict, db: Session = Depends(get_db)):
-    """Update leave status (approve/reject)"""
+async def update_leave_status_v1(
+    leave_id: int,
+    user: User = Depends(require_manager),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Update leave status (approve/reject) - Requires: Manager, Admin, or Super Admin role"""
+    log_request(logger, request, user.id, f"POST /api/v1/leaves/{leave_id}/status")
     try:
         leave = db.query(MemberLeave).filter(MemberLeave.id == leave_id).first()
         if not leave:
@@ -1588,10 +1660,13 @@ async def update_leave_status_v1(leave_id: int, payload: dict, db: Session = Dep
 
 @app.get("/api/v1/oncall/assignments", tags=["On-Call"])
 async def get_oncall_assignments_v1(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     week_start: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Get on-call assignments for a week"""
+    """Get on-call assignments for a week - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/oncall/assignments")
     try:
         from sqlalchemy import Table, MetaData, and_
 
@@ -1642,8 +1717,14 @@ async def get_oncall_assignments_v1(
 
 
 @app.post("/api/v1/oncall/assignments/run", tags=["On-Call"])
-async def run_oncall_assignments_v1(payload: dict, db: Session = Depends(get_db)):
-    """Generate on-call roster for a week"""
+async def run_oncall_assignments_v1(
+    user: User = Depends(require_manager),
+    request: Request = None,
+    payload: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Generate on-call roster for a week - Requires: Manager, Admin, or Super Admin role"""
+    log_request(logger, request, user.id, "POST /api/v1/oncall/assignments/run")
     try:
         from sqlalchemy import Table, MetaData, and_
 
@@ -1754,11 +1835,14 @@ async def run_oncall_assignments_v1(payload: dict, db: Session = Depends(get_db)
 
 @app.get("/api/v1/oncall/rotate", tags=["On-Call"])
 async def rotate_oncall_v1(
+    user: User = Depends(require_manager),
+    request: Request = None,
     team_level: str = Query(...),
     week_start: str = Query(...),
     db: Session = Depends(get_db)
 ):
-    """Rotate on-call assignment to next member"""
+    """Rotate on-call assignment to next member - Requires: Manager, Admin, or Super Admin role"""
+    log_request(logger, request, user.id, "GET /api/v1/oncall/rotate")
     try:
         from sqlalchemy import Table, MetaData, and_
 
@@ -1825,10 +1909,13 @@ async def rotate_oncall_v1(
 @app.post("/api/v1/oncall/assignments/{assignment_id}/replace", tags=["On-Call"])
 async def replace_oncall_assignment_v1(
     assignment_id: int,
-    payload: dict,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    payload: dict = None,
     db: Session = Depends(get_db)
 ):
-    """Replace engineer in on-call assignment"""
+    """Replace engineer in on-call assignment - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"POST /api/v1/oncall/assignments/{assignment_id}/replace")
     try:
         from sqlalchemy import Table, MetaData
 
