@@ -3,21 +3,25 @@ services:
   # Infrastructure Services
   # ============================================================================
 
+  # PostgreSQL Database (Reuses existing data from old app)
   postgres:
     image: postgres:15-alpine
-    container_name: devops-tickets-postgres
+    container_name: devops-tickets-db
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-devops_tickets}
-      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_password_change_this}
+      POSTGRES_DB: devops_tickets
+      POSTGRES_USER: devops_user
+      POSTGRES_PASSWORD: devops_password_change_this
       PGDATA: /var/lib/postgresql/data/pgdata
-      TZ: ${TZ:-Asia/Kolkata}
+      TZ: ${TZ:-UTC}
+      PGTZ: ${TZ:-UTC}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devops_user}"]
+      test: ["CMD-SHELL", "pg_isready -U devops_user"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -25,6 +29,7 @@ services:
       - microservices-network
     restart: unless-stopped
 
+  # Redis Cache (Reuses existing data from old app)
   redis:
     image: redis:7-alpine
     container_name: devops-tickets-redis
