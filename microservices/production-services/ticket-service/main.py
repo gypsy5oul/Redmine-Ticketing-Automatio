@@ -311,6 +311,62 @@ class TicketCollaboration(Base):
     ticket = relationship("TicketHistory", back_populates="collaborations")
     team_member = relationship("TeamMember")
 
+# --- Work Session Models ---
+class SessionType(str, enum.Enum):
+    """Types of work sessions"""
+    ACTIVE_WORK = "active_work"
+    WAITING_CUSTOMER = "waiting_customer"
+    WAITING_APPROVAL = "waiting_approval"
+    WAITING_DEPLOYMENT = "waiting_deployment"
+    WAITING_EXTERNAL = "waiting_external"
+    IDLE = "idle"
+
+class WorkSession(Base):
+    """Track individual work sessions for tickets"""
+    __tablename__ = "work_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("ticket_history.id"), nullable=False, index=True)
+    team_member_id = Column(Integer, ForeignKey("team_members.id"), nullable=False, index=True)
+
+    session_type = Column(String(50), nullable=False, default="active_work", index=True)
+
+    started_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    ended_at = Column(DateTime(timezone=True), index=True)
+    duration_minutes = Column(Integer)
+
+    is_active = Column(Boolean, default=True, index=True)
+    notes = Column(Text)
+    paused_reason = Column(String(200))
+    session_number = Column(Integer, default=1)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class EngineerWorkStatus(Base):
+    """Track engineer's current work status and capacity"""
+    __tablename__ = "engineer_work_status"
+
+    id = Column(Integer, primary_key=True, index=True)
+    team_member_id = Column(Integer, ForeignKey("team_members.id"), nullable=False, unique=True, index=True)
+
+    active_work_sessions_count = Column(Integer, default=0)
+    assigned_tickets_count = Column(Integer, default=0)
+
+    is_idle = Column(Boolean, default=False, index=True)
+    idle_since = Column(DateTime(timezone=True))
+    total_idle_minutes_today = Column(Integer, default=0)
+
+    can_accept_work = Column(Boolean, default=True)
+    max_concurrent_sessions = Column(Integer, default=2)
+
+    work_started_today_at = Column(DateTime(timezone=True))
+    total_work_minutes_today = Column(Integer, default=0)
+    total_waiting_minutes_today = Column(Integer, default=0)
+    tickets_completed_today = Column(Integer, default=0)
+
+    last_activity_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 # ============================================================================
 # SECURITY
 # ============================================================================
@@ -798,6 +854,442 @@ async def delete_comment(comment_id: int, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"❌ Failed to delete comment: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================================
+# WORK SESSION ENDPOINTS (CRITICAL FEATURE)
+# ============================================================================
+
+WAITING_SESSION_TYPES = {
+    SessionType.WAITING_CUSTOMER,
+    SessionType.WAITING_APPROVAL,
+    SessionType.WAITING_DEPLOYMENT,
+    SessionType.WAITING_EXTERNAL,
+}
+
+def _enum_value(value):
+    """Return enum value if available"""
+    return value.value if hasattr(value, "value") else value
+
+@app.post("/api/v1/tickets/{ticket_id}/work/start", tags=["Work Sessions"])
+async def start_work_session(ticket_id: int, db: Session = Depends(get_db)):
+    """
+    Start active work on a ticket
+
+    Source: /backend/app/api/v1/work_sessions.py:111-145
+    """
+    try:
+        now = datetime.now(timezone.utc)
+
+        # Get ticket
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        if not ticket.assigned_to_id:
+            raise HTTPException(status_code=400, detail="Ticket must be assigned before starting work")
+
+        member_id = ticket.assigned_to_id
+
+        # Get or create work status
+        work_status = db.query(EngineerWorkStatus).filter(
+            EngineerWorkStatus.team_member_id == member_id
+        ).first()
+
+        if not work_status:
+            work_status = EngineerWorkStatus(team_member_id=member_id)
+            db.add(work_status)
+            db.flush()
+
+        # Check concurrent session limit
+        if work_status.active_work_sessions_count >= work_status.max_concurrent_sessions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Active work session limit reached ({work_status.max_concurrent_sessions} max). Pause another ticket first."
+            )
+
+        # Get next session number
+        max_session = db.query(func.max(WorkSession.session_number)).filter(
+            WorkSession.ticket_id == ticket_id
+        ).scalar()
+        session_number = (max_session or 0) + 1
+
+        # Create work session
+        work_session = WorkSession(
+            ticket_id=ticket_id,
+            team_member_id=member_id,
+            session_type=SessionType.ACTIVE_WORK.value,
+            is_active=True,
+            session_number=session_number,
+            started_at=now
+        )
+        db.add(work_session)
+        db.flush()
+
+        # Update ticket status
+        ticket.status = TicketStatus.IN_PROGRESS
+        if not ticket.work_started_at:
+            ticket.work_started_at = now
+        ticket.last_work_session_at = now
+
+        # Update engineer status
+        work_status.active_work_sessions_count += 1
+        work_status.is_idle = False
+        work_status.idle_since = None
+        work_status.last_activity_at = now
+        work_status.can_accept_work = (
+            work_status.active_work_sessions_count < work_status.max_concurrent_sessions
+        )
+
+        db.commit()
+        db.refresh(work_session)
+
+        logger.info(f"✅ Started work session {work_session.id} for ticket {ticket_id}")
+
+        return {
+            "success": True,
+            "ticket_id": ticket_id,
+            "session_id": work_session.id,
+            "ticket_status": _enum_value(ticket.status),
+            "active_sessions_count": work_status.active_work_sessions_count,
+            "can_accept_more_work": work_status.can_accept_work,
+            "started_at": work_session.started_at.isoformat()
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Failed to start work session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/tickets/{ticket_id}/work/pause", tags=["Work Sessions"])
+async def pause_work_session(
+    ticket_id: int,
+    reason: str,
+    notes: str = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Pause active work and enter waiting state
+
+    Source: /backend/app/api/v1/work_sessions.py:148-192
+
+    Args:
+        reason: waiting_customer, waiting_approval, waiting_deployment, waiting_external
+        notes: Optional context
+    """
+    try:
+        now = datetime.now(timezone.utc)
+
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        member_id = ticket.assigned_to_id
+        if not member_id:
+            raise HTTPException(status_code=400, detail="Ticket not assigned")
+
+        # Find active work session
+        active_session = db.query(WorkSession).filter(
+            WorkSession.ticket_id == ticket_id,
+            WorkSession.team_member_id == member_id,
+            WorkSession.is_active == True,
+            WorkSession.session_type == SessionType.ACTIVE_WORK.value
+        ).first()
+
+        if not active_session:
+            raise HTTPException(status_code=404, detail="No active work session found")
+
+        # End active session
+        active_session.is_active = False
+        active_session.ended_at = now
+        if active_session.started_at:
+            duration = (now - active_session.started_at).total_seconds() / 60
+            active_session.duration_minutes = int(duration)
+
+        # Create waiting session
+        max_session = db.query(func.max(WorkSession.session_number)).filter(
+            WorkSession.ticket_id == ticket_id
+        ).scalar()
+
+        waiting_session = WorkSession(
+            ticket_id=ticket_id,
+            team_member_id=member_id,
+            session_type=reason,
+            is_active=True,
+            session_number=(max_session or 0) + 1,
+            started_at=now,
+            paused_reason=reason,
+            notes=notes
+        )
+        db.add(waiting_session)
+
+        # Update ticket status
+        ticket.status = TicketStatus.PENDING
+
+        # Update engineer status
+        work_status = db.query(EngineerWorkStatus).filter(
+            EngineerWorkStatus.team_member_id == member_id
+        ).first()
+
+        if work_status:
+            work_status.active_work_sessions_count -= 1
+            work_status.last_activity_at = now
+            work_status.can_accept_work = (
+                work_status.active_work_sessions_count < work_status.max_concurrent_sessions
+            )
+
+        db.commit()
+        db.refresh(waiting_session)
+
+        logger.info(f"✅ Paused work session for ticket {ticket_id}, reason: {reason}")
+
+        return {
+            "success": True,
+            "ended_session": {
+                "id": active_session.id,
+                "type": active_session.session_type,
+                "duration_minutes": active_session.duration_minutes
+            },
+            "waiting_session": {
+                "id": waiting_session.id,
+                "type": waiting_session.session_type,
+                "started_at": waiting_session.started_at.isoformat()
+            },
+            "ticket_id": ticket_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Failed to pause work session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/tickets/{ticket_id}/work/resume", tags=["Work Sessions"])
+async def resume_work_session(ticket_id: int, db: Session = Depends(get_db)):
+    """
+    Resume active work on a ticket
+
+    Source: /backend/app/api/v1/work_sessions.py:194-232
+    """
+    try:
+        now = datetime.now(timezone.utc)
+
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        member_id = ticket.assigned_to_id
+        if not member_id:
+            raise HTTPException(status_code=400, detail="Ticket not assigned")
+
+        # Find active waiting session
+        waiting_session = db.query(WorkSession).filter(
+            WorkSession.ticket_id == ticket_id,
+            WorkSession.team_member_id == member_id,
+            WorkSession.is_active == True,
+            WorkSession.session_type.in_([s.value for s in WAITING_SESSION_TYPES])
+        ).first()
+
+        if not waiting_session:
+            raise HTTPException(status_code=404, detail="No waiting session found to resume")
+
+        # End waiting session
+        waiting_session.is_active = False
+        waiting_session.ended_at = now
+        if waiting_session.started_at:
+            duration = (now - waiting_session.started_at).total_seconds() / 60
+            waiting_session.duration_minutes = int(duration)
+
+        # Create new active session
+        max_session = db.query(func.max(WorkSession.session_number)).filter(
+            WorkSession.ticket_id == ticket_id
+        ).scalar()
+
+        new_session = WorkSession(
+            ticket_id=ticket_id,
+            team_member_id=member_id,
+            session_type=SessionType.ACTIVE_WORK.value,
+            is_active=True,
+            session_number=(max_session or 0) + 1,
+            started_at=now
+        )
+        db.add(new_session)
+
+        # Update ticket status
+        ticket.status = TicketStatus.IN_PROGRESS
+        ticket.last_work_session_at = now
+
+        # Update engineer status
+        work_status = db.query(EngineerWorkStatus).filter(
+            EngineerWorkStatus.team_member_id == member_id
+        ).first()
+
+        if work_status:
+            work_status.active_work_sessions_count += 1
+            work_status.last_activity_at = now
+            work_status.can_accept_work = (
+                work_status.active_work_sessions_count < work_status.max_concurrent_sessions
+            )
+
+        db.commit()
+        db.refresh(new_session)
+
+        logger.info(f"✅ Resumed work session for ticket {ticket_id}")
+
+        return {
+            "success": True,
+            "ended_waiting_session": {
+                "id": waiting_session.id,
+                "type": waiting_session.session_type,
+                "duration_minutes": waiting_session.duration_minutes
+            },
+            "active_session": {
+                "id": new_session.id,
+                "started_at": new_session.started_at.isoformat(),
+                "type": new_session.session_type
+            },
+            "ticket_id": ticket_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Failed to resume work session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/tickets/{ticket_id}/work/summary", tags=["Work Sessions"])
+async def get_work_summary(ticket_id: int, db: Session = Depends(get_db)):
+    """
+    Get complete work session summary for a ticket
+
+    Source: /backend/app/api/v1/work_sessions.py:234-256
+    """
+    try:
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        # Get all sessions for this ticket
+        sessions = db.query(WorkSession).filter(
+            WorkSession.ticket_id == ticket_id
+        ).order_by(WorkSession.session_number).all()
+
+        # Calculate totals
+        total_active_minutes = 0
+        total_waiting_minutes = 0
+        active_session_count = 0
+        waiting_session_count = 0
+
+        session_list = []
+        for session in sessions:
+            duration = session.duration_minutes or 0
+
+            if session.session_type == SessionType.ACTIVE_WORK.value:
+                total_active_minutes += duration
+                active_session_count += 1
+            else:
+                total_waiting_minutes += duration
+                waiting_session_count += 1
+
+            session_list.append({
+                "id": session.id,
+                "session_number": session.session_number,
+                "type": session.session_type,
+                "started_at": session.started_at.isoformat() if session.started_at else None,
+                "ended_at": session.ended_at.isoformat() if session.ended_at else None,
+                "duration_minutes": duration,
+                "is_active": session.is_active,
+                "notes": session.notes,
+                "paused_reason": session.paused_reason
+            })
+
+        total_minutes = total_active_minutes + total_waiting_minutes
+        work_efficiency = (total_active_minutes / total_minutes * 100) if total_minutes > 0 else 0
+
+        logger.info(f"✅ Retrieved work summary for ticket {ticket_id}: {len(sessions)} sessions")
+
+        return {
+            "success": True,
+            "ticket_id": ticket_id,
+            "ticket_subject": ticket.subject,
+            "summary": {
+                "total_sessions": len(sessions),
+                "active_work_sessions": active_session_count,
+                "waiting_sessions": waiting_session_count,
+                "total_active_minutes": total_active_minutes,
+                "total_waiting_minutes": total_waiting_minutes,
+                "total_minutes": total_minutes,
+                "work_efficiency_percent": round(work_efficiency, 1),
+                "total_active_hours": round(total_active_minutes / 60, 2),
+                "total_waiting_hours": round(total_waiting_minutes / 60, 2)
+            },
+            "sessions": session_list
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to get work summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/work/active", tags=["Work Sessions"])
+async def get_active_work_sessions(db: Session = Depends(get_db)):
+    """
+    Get all active work sessions
+
+    Source: /backend/app/api/v1/work_sessions.py:258-278
+
+    Returns active sessions across all engineers (for now - simplified version)
+    """
+    try:
+        # Get all active sessions
+        active_sessions = db.query(WorkSession).filter(
+            WorkSession.is_active == True,
+            WorkSession.session_type == SessionType.ACTIVE_WORK.value
+        ).all()
+
+        session_list = []
+        for session in active_sessions:
+            ticket = db.query(TicketHistory).filter(TicketHistory.id == session.ticket_id).first()
+            member = db.query(TeamMember).filter(TeamMember.id == session.team_member_id).first()
+
+            if ticket and member:
+                duration = 0
+                if session.started_at:
+                    duration = int((datetime.now(timezone.utc) - session.started_at).total_seconds() / 60)
+
+                session_list.append({
+                    "session_id": session.id,
+                    "ticket_id": ticket.id,
+                    "redmine_ticket_id": ticket.redmine_ticket_id,
+                    "ticket_subject": ticket.subject,
+                    "ticket_priority": _enum_value(ticket.priority),
+                    "member_id": member.id,
+                    "member_name": member.name,
+                    "started_at": session.started_at.isoformat() if session.started_at else None,
+                    "duration_minutes": duration,
+                    "session_type": session.session_type
+                })
+
+        logger.info(f"✅ Retrieved {len(session_list)} active work sessions")
+
+        return {
+            "success": True,
+            "active_sessions": session_list,
+            "count": len(session_list)
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to get active sessions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # ============================================================================
 # LEGACY ENDPOINTS (Phase 2)
