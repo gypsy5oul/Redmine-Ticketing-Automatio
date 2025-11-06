@@ -874,6 +874,476 @@ async def predict_all_ticket_attributes(
 
 
 # ============================================================================
+# ANALYTICS ENDPOINTS (Phase 1C)
+# ============================================================================
+
+@app.get("/api/v1/analytics/forecast", tags=["Analytics"])
+async def get_volume_forecast(
+    days: int = Query(7, description="Number of days to forecast"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get ticket volume forecast for capacity planning
+
+    Source: /backend/app/main.py:1665-1673
+
+    Args:
+        days: Number of days to forecast (default: 7)
+
+    Returns:
+        {
+            "historical": [...],
+            "forecast": [...],
+            "busy_periods": [...],
+            "historical_avg": int,
+            "trend": str,
+            "recommendations": {...}
+        }
+    """
+    try:
+        now = datetime.now()
+        end_date = now
+        start_date = now - timedelta(days=90)  # Last 90 days
+
+        # Get historical daily volumes
+        from sqlalchemy import func, Date
+
+        daily_volumes = (
+            db.query(
+                func.date(TicketHistory.created_at).label('date'),
+                func.count(TicketHistory.id).label('count')
+            )
+            .filter(TicketHistory.created_at >= start_date)
+            .group_by(func.date(TicketHistory.created_at))
+            .order_by(func.date(TicketHistory.created_at))
+            .all()
+        )
+
+        if len(daily_volumes) < 14:
+            return {
+                "forecast": [],
+                "busy_periods": [],
+                "recommendations": {"note": "Need at least 14 days of data for forecasting"},
+                "historical_avg": 0,
+                "trend": "unknown"
+            }
+
+        # Convert to arrays for calculations
+        import numpy as np
+        dates = [row[0] for row in daily_volumes]
+        volumes = np.array([row[1] for row in daily_volumes])
+
+        # Calculate statistics
+        avg_volume = float(np.mean(volumes))
+        std_volume = float(np.std(volumes))
+
+        # Simple trend detection (last 7 days vs previous 7 days)
+        if len(volumes) >= 14:
+            recent_avg = np.mean(volumes[-7:])
+            prev_avg = np.mean(volumes[-14:-7])
+            trend_diff = recent_avg - prev_avg
+
+            if trend_diff > 2:
+                trend = "increasing"
+            elif trend_diff < -2:
+                trend = "decreasing"
+            else:
+                trend = "stable"
+        else:
+            trend = "stable"
+
+        # Simple moving average forecast
+        window_size = min(7, len(volumes))
+        ma = np.mean(volumes[-window_size:])
+
+        forecast = []
+        for i in range(days):
+            pred_date = end_date + timedelta(days=i+1)
+            predicted = int(ma)
+
+            forecast.append({
+                "date": pred_date.strftime("%Y-%m-%d"),
+                "count": predicted,
+                "predicted": True,
+                "lower_bound": max(0, int(predicted - std_volume)),
+                "upper_bound": int(predicted + std_volume),
+                "confidence": 0.70
+            })
+
+        # Historical data
+        historical = [
+            {
+                "date": date.strftime("%Y-%m-%d") if hasattr(date, 'strftime') else str(date),
+                "count": int(count),
+                "predicted": False
+            }
+            for date, count in zip(dates, volumes)
+        ]
+
+        # Identify busy periods (above avg + 1 std)
+        busy_threshold = avg_volume + std_volume
+        busy_periods = [f for f in forecast if f['count'] > busy_threshold]
+
+        # Get current capacity
+        current_capacity = db.query(TeamMember).filter(
+            TeamMember.active == True
+        ).count() * 8
+
+        # Generate recommendations
+        recommendations = {}
+        max_predicted = max(f['count'] for f in forecast) if forecast else 0
+
+        if max_predicted > current_capacity * 0.8:
+            recommendations['capacity_alert'] = (
+                f"Peak volume ({max_predicted}) may exceed 80% capacity. "
+                f"Consider on-call resources."
+            )
+
+        if trend == "increasing":
+            recommendations['trend_alert'] = (
+                f"Ticket volume is trending upward. Monitor capacity."
+            )
+
+        if len(busy_periods) >= 3:
+            recommendations['busy_period_alert'] = (
+                f"{len(busy_periods)} busy days forecasted. Ensure adequate staffing."
+            )
+
+        logger.info(f"✅ Forecast generated: {days} days, trend={trend}, avg={avg_volume:.1f}")
+
+        return {
+            "historical": historical,
+            "forecast": forecast,
+            "busy_periods": busy_periods,
+            "historical_avg": int(avg_volume),
+            "historical_std": round(std_volume, 2),
+            "trend": trend,
+            "current_capacity": current_capacity,
+            "recommendations": recommendations,
+            "method": "moving_average"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Forecast generation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/analytics/sla-prediction/{ticket_id}", tags=["Analytics"])
+async def predict_sla_breach(ticket_id: int, db: Session = Depends(get_db)):
+    """
+    Predict SLA breach probability for a ticket
+
+    Source: /backend/app/main.py:1676-1692
+
+    Args:
+        ticket_id: Database ticket ID (not redmine_ticket_id)
+
+    Returns:
+        {
+            "probability": 0.0-1.0,
+            "risk_level": "low|medium|high",
+            "risk_factors": [...],
+            "recommendation": str
+        }
+    """
+    try:
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        if not ticket.assigned_to_id:
+            return {
+                "probability": 0.5,
+                "risk_level": "medium",
+                "risk_factors": ["Ticket not assigned yet"],
+                "recommendation": "Assign ticket to assess SLA risk"
+            }
+
+        # Calculate risk factors
+        factors = []
+        risk_score = 0.0
+
+        # Priority factor
+        if ticket.priority == TicketPriority.P1_CRITICAL:
+            risk_score += 0.3
+            factors.append("Critical priority")
+        elif ticket.priority == TicketPriority.P2_HIGH:
+            risk_score += 0.15
+            factors.append("High priority")
+
+        # Check assignee workload
+        assignee = db.query(TeamMember).filter(TeamMember.id == ticket.assigned_to_id).first()
+        if assignee:
+            current_tickets = db.query(TicketHistory).filter(
+                TicketHistory.assigned_to_id == assignee.id,
+                TicketHistory.status.in_([TicketStatus.ASSIGNED, TicketStatus.IN_PROGRESS])
+            ).count()
+
+            if current_tickets >= assignee.max_tickets * 0.8:
+                risk_score += 0.2
+                factors.append("High assignee workload")
+
+            # Historical performance
+            if assignee.sla_compliance_rate < 85:
+                risk_score += 0.2
+                factors.append("Below average SLA compliance")
+
+        # Time since creation
+        if ticket.created_at:
+            hours_open = (datetime.now() - ticket.created_at).total_seconds() / 3600
+
+            # Check against SLA target (simplified)
+            sla_hours = {
+                TicketPriority.P1_CRITICAL: 4,
+                TicketPriority.P2_HIGH: 8,
+                TicketPriority.P3_MEDIUM: 24,
+                TicketPriority.P4_LOW: 48,
+                TicketPriority.P5_TRIVIAL: 72
+            }
+            target_hours = sla_hours.get(ticket.priority, 24)
+
+            if hours_open > target_hours * 0.7:
+                risk_score += 0.3
+                factors.append(f"Already open {hours_open:.1f} hours (target: {target_hours}h)")
+
+        # Determine risk level
+        if risk_score >= 0.7:
+            risk_level = "high"
+            recommendation = "Consider escalation or additional resources"
+        elif risk_score >= 0.4:
+            risk_level = "medium"
+            recommendation = "Monitor closely, may need support"
+        else:
+            risk_level = "low"
+            recommendation = "Normal processing expected"
+
+        if not factors:
+            factors.append("No significant risk factors identified")
+
+        logger.info(f"✅ SLA prediction for ticket {ticket_id}: {risk_level} ({risk_score:.2f})")
+
+        return {
+            "probability": min(risk_score, 1.0),
+            "risk_level": risk_level,
+            "risk_factors": factors,
+            "recommendation": recommendation,
+            "ticket_id": ticket_id,
+            "hours_open": round((datetime.now() - ticket.created_at).total_seconds() / 3600, 1) if ticket.created_at else 0
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ SLA prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/ml/train", tags=["Analytics", "ML"])
+async def train_ml_models(
+    force_retrain: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Train ML models with historical data
+
+    Source: /backend/app/main.py:1695-1713
+
+    This endpoint trains:
+    - Category classifier
+    - Complexity predictor
+    - Resolution time predictor
+
+    Requires at least 100 resolved tickets in database.
+
+    Note: Currently returns stub since sklearn is not installed
+    """
+    try:
+        # Check training data availability
+        total_tickets = db.query(TicketHistory).filter(
+            TicketHistory.resolved_at.isnot(None)
+        ).count()
+
+        if total_tickets < 100:
+            logger.warning(f"⚠️ Insufficient training data: {total_tickets} < 100")
+            return {
+                "success": False,
+                "error": f"Need at least 100 resolved tickets for training",
+                "current_count": total_tickets,
+                "status": "insufficient_data"
+            }
+
+        logger.info(f"📊 ML training requested with {total_tickets} resolved tickets")
+
+        # Return stub response - full implementation requires sklearn
+        return {
+            "success": True,
+            "status": "using_rule_based",
+            "message": "ML training not implemented - using rule-based predictions",
+            "training_samples": total_tickets,
+            "models_trained": 0,
+            "rule_based_fallback": True,
+            "trained_at": datetime.now().isoformat(),
+            "note": "Install sklearn for full ML training support"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ ML training failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/analytics/team-performance", tags=["Analytics"])
+async def get_team_performance(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get team performance metrics
+
+    Source: /backend/app/main.py:1716-1780
+
+    Args:
+        start_date: ISO format date (default: 30 days ago)
+        end_date: ISO format date (default: today)
+
+    Returns:
+        {
+            "performance": [...],
+            "start_date": str,
+            "end_date": str,
+            "total_members": int
+        }
+    """
+    try:
+        # Default to last 30 days
+        if not end_date:
+            end_dt = datetime.now()
+        else:
+            end_dt = datetime.fromisoformat(end_date)
+
+        if not start_date:
+            start_dt = end_dt - timedelta(days=30)
+        else:
+            start_dt = datetime.fromisoformat(start_date)
+
+        # Get all team members
+        members = db.query(TeamMember).filter(TeamMember.active == True).all()
+
+        performance_data = []
+
+        for member in members:
+            # Get tickets resolved by this member in date range
+            resolved_tickets = db.query(TicketHistory).filter(
+                TicketHistory.assigned_to_id == member.id,
+                TicketHistory.resolved_at.isnot(None),
+                TicketHistory.resolved_at >= start_dt,
+                TicketHistory.resolved_at <= end_dt
+            ).all()
+
+            tickets_resolved = len(resolved_tickets)
+
+            # Calculate average resolution time
+            if resolved_tickets:
+                resolution_times = [
+                    t.actual_resolution_hours for t in resolved_tickets
+                    if t.actual_resolution_hours
+                ]
+                avg_resolution = sum(resolution_times) / len(resolution_times) if resolution_times else 0
+
+                # Calculate SLA compliance
+                sla_met = sum(1 for t in resolved_tickets if not t.sla_breached)
+                sla_rate = (sla_met / tickets_resolved * 100) if tickets_resolved > 0 else 100
+            else:
+                avg_resolution = member.avg_resolution_time_hours or 0
+                sla_rate = member.sla_compliance_rate or 100
+
+            performance_data.append({
+                "member_id": member.id,
+                "member_name": member.name,
+                "team_level": _session_type_to_str(member.team_level) if member.team_level else "L1",
+                "tickets_resolved": tickets_resolved,
+                "avg_resolution_time": round(avg_resolution, 2),
+                "sla_compliance_rate": round(sla_rate, 2),
+                "active": member.active,
+                "total_capacity": member.max_tickets
+            })
+
+        logger.info(f"✅ Team performance: {len(performance_data)} members, {start_dt.date()} to {end_dt.date()}")
+
+        return {
+            "performance": performance_data,
+            "start_date": start_dt.date().isoformat(),
+            "end_date": end_dt.date().isoformat(),
+            "total_members": len(performance_data)
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Team performance fetch failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/ml/models/status", tags=["Analytics", "ML"])
+async def get_ml_models_status():
+    """
+    Get status of ML models (loaded, last trained, etc.)
+
+    Source: /backend/app/main.py:1783-1816
+
+    Returns:
+        {
+            "models": {...},
+            "models_path": str,
+            "all_present": bool,
+            "status": str
+        }
+    """
+    try:
+        # Check if ML models directory exists
+        models_path = "/app/ml_models"  # Standard path
+        models = [
+            "category_classifier.joblib",
+            "category_vectorizer.joblib",
+            "complexity_classifier.joblib",
+            "complexity_vectorizer.joblib",
+            "resolution_regressor.joblib",
+            "resolution_vectorizer.joblib"
+        ]
+
+        models_status = {}
+
+        import os
+        for model in models:
+            path = f"{models_path}/{model}"
+            if os.path.exists(path):
+                mtime = os.path.getmtime(path)
+                models_status[model] = {
+                    "exists": True,
+                    "last_modified": datetime.fromtimestamp(mtime).isoformat(),
+                    "size_kb": round(os.path.getsize(path) / 1024, 2)
+                }
+            else:
+                models_status[model] = {"exists": False}
+
+        all_present = all(m["exists"] for m in models_status.values())
+
+        logger.info(f"✅ ML models status: {sum(1 for m in models_status.values() if m['exists'])}/{len(models)} present")
+
+        return {
+            "models": models_status,
+            "models_path": models_path,
+            "all_present": all_present,
+            "status": "trained" if all_present else "using_rule_based",
+            "prediction_method": "ml" if all_present else "rule_based",
+            "note": "Using rule-based predictions - train models with POST /api/v1/ml/train"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Model status check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # SERVER STARTUP
 # ============================================================================
 
