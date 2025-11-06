@@ -11,11 +11,15 @@ Endpoints:
 """
 
 import os
+import sys
 import requests
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
-from loguru import logger
+
+# Add shared module
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.auth_utils import setup_logging, log_request, get_current_user, User
 
 class Settings(BaseSettings):
     REDMINE_BASE_URL: str = os.getenv("REDMINE_BASE_URL", "https://redmine.example.com")
@@ -59,6 +63,10 @@ class RedmineService:
             return None
 
 app = FastAPI(title="Integration Service", version="1.0.0")
+
+# Setup enhanced logging
+logger = setup_logging("integration-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/health")
@@ -66,8 +74,12 @@ async def health_check():
     return {"service": settings.SERVICE_NAME, "status": "healthy"}
 
 @app.get("/api/v1/redmine/projects", tags=["Redmine"])
-async def get_projects():
-    """Get Redmine projects"""
+async def get_projects(
+    user: User = Depends(get_current_user),
+    request: Request = None
+):
+    """Get Redmine projects - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/redmine/projects")
     try:
         redmine = RedmineService()
         projects = redmine.get_projects()
@@ -76,29 +88,39 @@ async def get_projects():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/redmine/user/{user_id}", tags=["Redmine"])
-async def get_user(user_id: int):
-    """Get Redmine user"""
+async def get_user(
+    user_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None
+):
+    """Get Redmine user - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/redmine/user/{user_id}")
     try:
         redmine = RedmineService()
-        user = redmine.get_user(user_id)
-        if not user:
+        redmine_user = redmine.get_user(user_id)
+        if not redmine_user:
             raise HTTPException(status_code=404, detail="User not found")
-        return {"success": True, "user": user}
+        return {"success": True, "user": redmine_user}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/redmine/group-members", tags=["Redmine"])
-async def get_redmine_group_members(group_id: int = None):
+async def get_redmine_group_members(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    group_id: int = None
+):
     """
-    Fetch all users from Redmine DevOps group
+    Fetch all users from Redmine DevOps group - Requires: Any authenticated user
 
     Source: /backend/app/main.py:2338-2357
 
     This endpoint fetches users from the configured DevOps Team group in Redmine,
     including detailed information like email and login. Used for adding new team members.
     """
+    log_request(logger, request, user.id, "GET /api/v1/redmine/group-members")
     try:
         redmine = RedmineService()
 
@@ -146,9 +168,12 @@ async def get_redmine_group_members(group_id: int = None):
 
 
 @app.post("/api/v1/redmine/sync-statuses", tags=["Redmine"])
-async def sync_redmine_statuses():
+async def sync_redmine_statuses(
+    user: User = Depends(get_current_user),
+    request: Request = None
+):
     """
-    Synchronize ticket statuses with Redmine
+    Synchronize ticket statuses with Redmine - Requires: Any authenticated user
 
     Source: /backend/app/main.py:2378-2391
 
@@ -157,6 +182,7 @@ async def sync_redmine_statuses():
 
     Note: Full implementation requires TicketProcessor service integration
     """
+    log_request(logger, request, user.id, "POST /api/v1/redmine/sync-statuses")
     try:
         logger.info("🔄 Redmine status sync requested")
 
