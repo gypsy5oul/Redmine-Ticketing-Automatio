@@ -2,52 +2,16 @@ services:
   # ============================================================================
   # Infrastructure Services
   # ============================================================================
-
-  # PostgreSQL Database (Reuses existing data from old app)
-  postgres:
-    image: postgres:15-alpine
-    container_name: devops-tickets-db
-    environment:
-      POSTGRES_DB: devops_tickets
-      POSTGRES_USER: devops_user
-      POSTGRES_PASSWORD: devops_password_change_this
-      PGDATA: /var/lib/postgresql/data/pgdata
-      TZ: ${TZ:-UTC}
-      PGTZ: ${TZ:-UTC}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - /etc/localtime:/etc/localtime:ro
-      - /etc/timezone:/etc/timezone:ro
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devops_user"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - microservices-network
-    restart: unless-stopped
-
-  # Redis Cache (Reuses existing data from old app)
-  redis:
-    image: redis:7-alpine
-    container_name: devops-tickets-redis
-    command: redis-server --appendonly yes
-    environment:
-      TZ: ${TZ:-Asia/Kolkata}
-    volumes:
-      - redis_data:/data
-    ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    networks:
-      - microservices-network
-    restart: unless-stopped
+  #
+  # NOTE: PostgreSQL and Redis are NOT defined here!
+  # They run from the old docker-compose.yml in the parent directory.
+  # This docker-compose connects to them via the devops-network.
+  #
+  # To start postgres and redis from old app:
+  #   cd /home/user/Redmine-Ticketing-Automatio
+  #   docker-compose up -d postgres redis
+  #
+  # ============================================================================
 
   # Kong Database (Separate PostgreSQL for Kong)
   kong-database:
@@ -170,13 +134,9 @@ services:
       SERVICE_PORT: 8001
     ports:
       - "8001:8001"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
@@ -205,13 +165,9 @@ services:
       SERVICE_PORT: 8002
     ports:
       - "8002:8002"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)"]
@@ -235,13 +191,9 @@ services:
       SERVICE_PORT: 8003
     ports:
       - "8003:8003"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=5)"]
@@ -265,13 +217,9 @@ services:
       SERVICE_PORT: 8004
     ports:
       - "8004:8004"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=5)"]
@@ -294,13 +242,9 @@ services:
       SERVICE_PORT: 8005
     ports:
       - "8005:8005"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=5)"]
@@ -320,11 +264,9 @@ services:
       SERVICE_PORT: 8006
     ports:
       - "8006:8006"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=5)"]
@@ -344,11 +286,9 @@ services:
       SERVICE_PORT: 8007
     ports:
       - "8007:8007"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=5)"]
@@ -368,11 +308,9 @@ services:
       SERVICE_PORT: 8008
     ports:
       - "8008:8008"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=5)"]
@@ -414,11 +352,9 @@ services:
       SERVICE_PORT: 8010
     ports:
       - "8010:8010"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"]
@@ -438,11 +374,9 @@ services:
       SERVICE_PORT: 8011
     ports:
       - "8011:8011"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - microservices-network
+      - devops-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=5)"]
@@ -481,10 +415,6 @@ services:
       retries: 3
 
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
   kong_data:
     driver: local
   rabbitmq_data:
@@ -493,3 +423,6 @@ volumes:
 networks:
   microservices-network:
     driver: bridge
+  # External network to connect to postgres and redis from old app
+  devops-network:
+    external: true
