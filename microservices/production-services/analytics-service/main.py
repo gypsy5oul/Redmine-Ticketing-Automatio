@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy import func, desc, and_, case, or_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker, relationship
+import redis
 
 # Add shared module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
@@ -49,6 +50,19 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# ============================================================================
+# REDIS CACHE
+# ============================================================================
+
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "redis"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    db=int(os.getenv("REDIS_DB", "0")),
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_timeout=5
+)
 
 # ============================================================================
 # ENUMS
@@ -211,9 +225,13 @@ async def health_check():
 # ============================================================================
 
 @app.get("/api/v1/dashboard/metrics", tags=["Dashboard"])
-async def get_dashboard_metrics(db: Session = Depends(get_db)):
+async def get_dashboard_metrics(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Get comprehensive dashboard metrics
+    Get comprehensive dashboard metrics - Requires: Any authenticated user
 
     Returns summary of:
     - Total tickets (by status)
@@ -221,6 +239,7 @@ async def get_dashboard_metrics(db: Session = Depends(get_db)):
     - Team workload
     - Recent activity
     """
+    log_request(logger, request, user.id, "GET /api/v1/dashboard/metrics")
     try:
         now = datetime.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -484,8 +503,14 @@ async def get_dashboard_metrics(db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/dashboard/activity", tags=["Dashboard"])
-async def get_recent_activity(limit: int = 20, db: Session = Depends(get_db)):
-    """Get recent ticket activity"""
+async def get_recent_activity(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
+    """Get recent ticket activity - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/dashboard/activity")
     try:
         activities = (
             db.query(Activity)
@@ -534,8 +559,13 @@ async def get_recent_activity(limit: int = 20, db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.get("/api/v1/analytics/dashboard", tags=["Analytics"])
-async def get_dashboard_simple(db: Session = Depends(get_db)):
-    """Get simple dashboard metrics (legacy endpoint)"""
+async def get_dashboard_simple(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get simple dashboard metrics (legacy endpoint) - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/analytics/dashboard")
     try:
         total_tickets = db.query(TicketHistory).count()
         open_tickets = db.query(TicketHistory).filter(
@@ -682,12 +712,14 @@ class SimpleLLMPredictor:
 
 @app.post("/api/v1/ml/predict/category", tags=["Analytics", "ML"])
 async def predict_ticket_category(
-    subject: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    subject: str = None,
     description: str = "",
     priority: str = "P3(Medium)"
 ):
     """
-    Predict ticket category using ML/rule-based logic
+    Predict ticket category using ML/rule-based logic - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1819-1844
 
@@ -704,6 +736,7 @@ async def predict_ticket_category(
             "method": str
         }
     """
+    log_request(logger, request, user.id, "POST /api/v1/ml/predict/category")
     try:
         ticket = {
             "subject": subject,
@@ -725,12 +758,14 @@ async def predict_ticket_category(
 
 @app.post("/api/v1/ml/predict/complexity", tags=["Analytics", "ML"])
 async def predict_ticket_complexity(
-    subject: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    subject: str = None,
     description: str = "",
     priority: str = "P3(Medium)"
 ):
     """
-    Predict ticket complexity using ML/rule-based logic
+    Predict ticket complexity using ML/rule-based logic - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1846-1872
 
@@ -747,6 +782,7 @@ async def predict_ticket_complexity(
             "method": str
         }
     """
+    log_request(logger, request, user.id, "POST /api/v1/ml/predict/complexity")
     try:
         ticket = {
             "subject": subject,
@@ -768,12 +804,14 @@ async def predict_ticket_complexity(
 
 @app.post("/api/v1/ml/predict/resolution-time", tags=["Analytics", "ML"])
 async def predict_resolution_time(
-    subject: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    subject: str = None,
     description: str = "",
     priority: str = "P3(Medium)"
 ):
     """
-    Predict ticket resolution time using ML/rule-based logic
+    Predict ticket resolution time using ML/rule-based logic - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1875-1900
 
@@ -789,6 +827,7 @@ async def predict_resolution_time(
             "method": str
         }
     """
+    log_request(logger, request, user.id, "POST /api/v1/ml/predict/resolution-time")
     try:
         ticket = {
             "subject": subject,
@@ -810,12 +849,14 @@ async def predict_resolution_time(
 
 @app.post("/api/v1/ml/predict/all", tags=["Analytics", "ML"])
 async def predict_all_ticket_attributes(
-    subject: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    subject: str = None,
     description: str = "",
     priority: str = "P3(Medium)"
 ):
     """
-    Run all ML predictions at once for a ticket
+    Run all ML predictions at once for a ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1903-1947
 
@@ -832,6 +873,7 @@ async def predict_all_ticket_attributes(
             "ticket_summary": {...}
         }
     """
+    log_request(logger, request, user.id, "POST /api/v1/ml/predict/all")
     try:
         ticket = {
             "subject": subject,
@@ -886,11 +928,13 @@ async def predict_all_ticket_attributes(
 
 @app.get("/api/v1/analytics/forecast", tags=["Analytics"])
 async def get_volume_forecast(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     days: int = Query(7, description="Number of days to forecast"),
     db: Session = Depends(get_db)
 ):
     """
-    Get ticket volume forecast for capacity planning
+    Get ticket volume forecast for capacity planning - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1665-1673
 
@@ -907,6 +951,7 @@ async def get_volume_forecast(
             "recommendations": {...}
         }
     """
+    log_request(logger, request, user.id, "GET /api/v1/analytics/forecast")
     try:
         now = datetime.now()
         end_date = now
@@ -1036,9 +1081,14 @@ async def get_volume_forecast(
 
 
 @app.get("/api/v1/analytics/sla-prediction/{ticket_id}", tags=["Analytics"])
-async def predict_sla_breach(ticket_id: int, db: Session = Depends(get_db)):
+async def predict_sla_breach(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Predict SLA breach probability for a ticket
+    Predict SLA breach probability for a ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1676-1692
 
@@ -1053,6 +1103,7 @@ async def predict_sla_breach(ticket_id: int, db: Session = Depends(get_db)):
             "recommendation": str
         }
     """
+    log_request(logger, request, user.id, f"GET /api/v1/analytics/sla-prediction/{ticket_id}")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
 
@@ -1148,11 +1199,13 @@ async def predict_sla_breach(ticket_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/ml/train", tags=["Analytics", "ML"])
 async def train_ml_models(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     force_retrain: bool = False,
     db: Session = Depends(get_db)
 ):
     """
-    Train ML models with historical data
+    Train ML models with historical data - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1695-1713
 
@@ -1165,6 +1218,7 @@ async def train_ml_models(
 
     Note: Currently returns stub since sklearn is not installed
     """
+    log_request(logger, request, user.id, "POST /api/v1/ml/train")
     try:
         # Check training data availability
         total_tickets = db.query(TicketHistory).filter(
@@ -1201,12 +1255,14 @@ async def train_ml_models(
 
 @app.get("/api/v1/analytics/team-performance", tags=["Analytics"])
 async def get_team_performance(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
-    Get team performance metrics
+    Get team performance metrics - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1716-1780
 
@@ -1222,6 +1278,7 @@ async def get_team_performance(
             "total_members": int
         }
     """
+    log_request(logger, request, user.id, "GET /api/v1/analytics/team-performance")
     try:
         # Default to last 30 days
         if not end_date:
@@ -1291,9 +1348,12 @@ async def get_team_performance(
 
 
 @app.get("/api/v1/ml/models/status", tags=["Analytics", "ML"])
-async def get_ml_models_status():
+async def get_ml_models_status(
+    user: User = Depends(get_current_user),
+    request: Request = None
+):
     """
-    Get status of ML models (loaded, last trained, etc.)
+    Get status of ML models (loaded, last trained, etc.) - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1783-1816
 
@@ -1305,6 +1365,7 @@ async def get_ml_models_status():
             "status": str
         }
     """
+    log_request(logger, request, user.id, "GET /api/v1/ml/models/status")
     try:
         # Check if ML models directory exists
         models_path = "/app/ml_models"  # Standard path
@@ -1356,12 +1417,14 @@ async def get_ml_models_status():
 
 @app.get("/api/v1/activities", tags=["Activities"])
 async def get_activities(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     limit: int = Query(50, description="Maximum number of activities"),
     hours: int = Query(24, description="Get activities from last N hours"),
     db: Session = Depends(get_db)
 ):
     """
-    Get recent activities for real-time feed
+    Get recent activities for real-time feed - Requires: Any authenticated user
 
     Source: /backend/app/main.py:2928-2958
 
@@ -1372,6 +1435,7 @@ async def get_activities(
     Returns:
         List of recent activities
     """
+    log_request(logger, request, user.id, "GET /api/v1/activities")
     try:
         from_time = datetime.now() - timedelta(hours=hours)
 
@@ -1430,11 +1494,13 @@ async def get_activities(
 @app.get("/api/v1/activities/ticket/{ticket_id}", tags=["Activities"])
 async def get_ticket_activities(
     ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
     limit: int = Query(20, description="Maximum number of activities"),
     db: Session = Depends(get_db)
 ):
     """
-    Get activities for a specific ticket
+    Get activities for a specific ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:2961-2983
 
@@ -1445,6 +1511,7 @@ async def get_ticket_activities(
     Returns:
         List of activities for the ticket
     """
+    log_request(logger, request, user.id, f"GET /api/v1/activities/ticket/{ticket_id}")
     try:
         # Verify ticket exists
         ticket = db.query(TicketHistory).filter(
@@ -1503,14 +1570,18 @@ async def get_ticket_activities(
 # ============================================================================
 
 @app.get("/api/v1/metrics/cache", tags=["Cache"])
-async def get_cache_metrics():
+async def get_cache_metrics(
+    user: User = Depends(get_current_user),
+    request: Request = None
+):
     """
-    Get comprehensive cache performance metrics
+    Get comprehensive cache performance metrics - Requires: Any authenticated user
 
     Source: /backend/app/main.py:168-198
 
     Returns Redis cache statistics and metrics
     """
+    log_request(logger, request, user.id, "GET /api/v1/metrics/cache")
     try:
         # Get Redis info
         try:
@@ -1544,15 +1615,20 @@ async def get_cache_metrics():
 
 
 @app.delete("/api/v1/cache/clear", tags=["Cache"])
-async def clear_cache(cache_type: str = Query("all", description="Type of cache to clear")):
+async def clear_cache(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    cache_type: str = Query("all", description="Type of cache to clear")
+):
     """
-    Clear cache by type
+    Clear cache by type - Requires: Any authenticated user
 
     Source: /backend/app/main.py:201-245
 
     Args:
         cache_type: Type of cache to clear (llm, query, sla, workload, analytics, all)
     """
+    log_request(logger, request, user.id, f"DELETE /api/v1/cache/clear?cache_type={cache_type}")
     try:
         patterns = {
             "llm": "llm:cache:*",
