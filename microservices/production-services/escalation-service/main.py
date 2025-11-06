@@ -10,14 +10,18 @@ Endpoints:
 """
 
 import os
+import sys
 from datetime import datetime, timezone
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, ForeignKey, Text, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
-from loguru import logger
+
+# Add shared module
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.auth_utils import setup_logging, log_request, get_current_user, User
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets")
@@ -49,6 +53,10 @@ class Escalation(Base):
     escalated_at = Column(DateTime(timezone=True), server_default=func.now())
 
 app = FastAPI(title="Escalation Service", version="1.0.0")
+
+# Setup enhanced logging
+logger = setup_logging("escalation-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/health")
@@ -56,8 +64,14 @@ async def health_check():
     return {"service": settings.SERVICE_NAME, "status": "healthy"}
 
 @app.post("/api/v1/escalations", tags=["Escalation"])
-async def create_escalation(data: dict, db: Session = Depends(get_db)):
-    """Create escalation"""
+async def create_escalation(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Create escalation - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "POST /api/v1/escalations")
     try:
         escalation = Escalation(
             ticket_id=data.get("ticket_id"),
@@ -78,8 +92,14 @@ async def create_escalation(data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/escalations/ticket/{ticket_id}", tags=["Escalation"])
-async def get_ticket_escalations(ticket_id: int, db: Session = Depends(get_db)):
-    """Get escalations for ticket"""
+async def get_ticket_escalations(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get escalations for ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/escalations/ticket/{ticket_id}")
     try:
         escalations = db.query(Escalation).filter(Escalation.ticket_id == ticket_id).all()
         return {
@@ -102,8 +122,14 @@ async def get_ticket_escalations(ticket_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/escalations/history", tags=["Escalation"])
-async def get_escalation_history(limit: int = 50, db: Session = Depends(get_db)):
-    """Get escalation history"""
+async def get_escalation_history(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """Get escalation history - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/escalations/history")
     try:
         escalations = db.query(Escalation).order_by(Escalation.escalated_at.desc()).limit(limit).all()
         return {
