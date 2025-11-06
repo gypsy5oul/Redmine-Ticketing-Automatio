@@ -7,10 +7,11 @@ Complete implementation with all endpoints from monolithic backend
 """
 
 import os
+import sys
 import enum
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -18,7 +19,10 @@ from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime
 from sqlalchemy import func, desc, and_, case, or_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker, relationship
-from loguru import logger
+
+# Add shared module
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.auth_utils import setup_logging, log_request, get_current_user, User
 
 # ============================================================================
 # SETTINGS
@@ -166,6 +170,9 @@ app = FastAPI(
     version="1.0.0",
     description="Dashboard metrics, analytics, and ML predictions"
 )
+
+# Setup enhanced logging
+logger = setup_logging("analytics-service", os.getenv("LOG_LEVEL", "INFO"))
 
 app.add_middleware(
     CORSMiddleware,
