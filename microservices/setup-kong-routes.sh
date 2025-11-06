@@ -94,13 +94,14 @@ create_service_route "escalation-service" "escalation-service" "8007" "/api/v1/e
 create_service_route "collaboration-service" "collaboration-service" "8008" "/api/v1/collaboration"
 create_service_route "integration-service" "integration-service" "8009" "/api/v1/integration"
 create_service_route "scheduling-service" "scheduling-service" "8010" "/api/v1/scheduling"
-create_service_route "work-session-service" "work-session-service" "8011" "/api/v1/work-sessions"
+create_service_route "project-service" "project-service" "8011" "/api/v1/projects"
 
 # Additional routes for frontend compatibility
 echo ""
 echo "Configuring additional frontend-compatible routes..."
 create_service_route "ml-endpoints" "analytics-service" "8006" "/api/v1/ml"
-create_service_route "work-endpoints" "work-session-service" "8011" "/api/v1/work"
+create_service_route "work-endpoints" "ticket-service" "8002" "/api/v1/work"
+create_service_route "dashboard-endpoints" "analytics-service" "8006" "/api/v1/dashboard"
 
 echo ""
 echo "=========================================="
