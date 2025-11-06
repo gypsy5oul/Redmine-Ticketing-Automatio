@@ -96,6 +96,12 @@ create_service_route "integration-service" "integration-service" "8009" "/api/v1
 create_service_route "scheduling-service" "scheduling-service" "8010" "/api/v1/scheduling"
 create_service_route "work-session-service" "work-session-service" "8011" "/api/v1/work-sessions"
 
+# Additional routes for frontend compatibility
+echo ""
+echo "Configuring additional frontend-compatible routes..."
+create_service_route "ml-endpoints" "analytics-service" "8006" "/api/v1/ml"
+create_service_route "work-endpoints" "work-session-service" "8011" "/api/v1/work"
+
 echo ""
 echo "=========================================="
 echo -e "${GREEN}✅ All Kong routes configured!${NC}"
