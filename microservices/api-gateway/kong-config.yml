@@ -94,6 +94,53 @@ services:
           - /api/v1/integration
         strip_path: false
 
+  # Scheduling Service
+  - name: scheduling-service
+    url: http://scheduling-service:8010
+    routes:
+      - name: shifts-routes
+        paths:
+          - /api/v1/shifts
+        strip_path: false
+      - name: leaves-routes
+        paths:
+          - /api/v1/leaves
+        strip_path: false
+      - name: oncall-routes
+        paths:
+          - /api/v1/oncall
+        strip_path: false
+      - name: scheduler-routes
+        paths:
+          - /api/v1/scheduler
+        strip_path: false
+
+  # Project Service
+  - name: project-service
+    url: http://project-service:8011
+    routes:
+      - name: project-routes
+        paths:
+          - /api/v1/projects
+        strip_path: false
+
+  # Additional Ticket Service Routes
+  - name: ticket-service-work
+    url: http://ticket-service:8102
+    routes:
+      - name: work-routes
+        paths:
+          - /api/v1/work
+        strip_path: false
+      - name: collaboration-routes
+        paths:
+          - /api/v1/collaboration
+        strip_path: false
+      - name: activity-routes
+        paths:
+          - /api/v1/activities
+        strip_path: false
+
 # ============================================================================
 # Global Plugins
 # ============================================================================
