@@ -15,6 +15,9 @@ COPY production-services/auth-service/requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy shared utilities (authentication and logging)
+COPY shared /app/shared
+
 # Copy application code
 COPY production-services/auth-service/main.py .
 
