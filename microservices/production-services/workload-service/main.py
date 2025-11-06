@@ -12,11 +12,12 @@ Endpoints:
 """
 
 import os
+import sys
 import enum
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, Enum, ForeignKey, func
@@ -24,7 +25,17 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
 from jose import jwt, JWTError
 import redis
-from loguru import logger
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    get_current_user,
+    User
+)
 
 # ============================================================================
 # SETTINGS
@@ -191,6 +202,10 @@ class WorkloadManager:
 # ============================================================================
 
 app = FastAPI(title="Workload Service", version="1.0.0")
+
+# Setup enhanced logging with request tracking
+logger = setup_logging("workload-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 @app.get("/health")
@@ -198,8 +213,14 @@ async def health_check():
     return {"service": settings.SERVICE_NAME, "status": "healthy"}
 
 @app.get("/api/v1/workload/team", tags=["Workload"])
-async def get_team_workload(team_level: Optional[str] = None, db: Session = Depends(get_db)):
-    """Get team workload"""
+async def get_team_workload(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    team_level: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get team workload - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/workload/team")
     try:
         manager = WorkloadManager(db)
         workload = manager.get_team_workload(team_level)
@@ -208,8 +229,14 @@ async def get_team_workload(team_level: Optional[str] = None, db: Session = Depe
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/workload/member/{member_id}", tags=["Workload"])
-async def get_member_workload(member_id: int, db: Session = Depends(get_db)):
-    """Get member workload"""
+async def get_member_workload(
+    member_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get member workload - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/workload/member/{member_id}")
     try:
         manager = WorkloadManager(db)
         current = manager.get_current_workload(member_id)
@@ -231,8 +258,13 @@ async def get_member_workload(member_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/workload/capacity", tags=["Workload"])
-async def get_capacity_summary(db: Session = Depends(get_db)):
-    """Get capacity summary"""
+async def get_capacity_summary(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get capacity summary - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/workload/capacity")
     try:
         manager = WorkloadManager(db)
         summary = manager.get_capacity_summary()
