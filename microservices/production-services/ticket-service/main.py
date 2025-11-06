@@ -1292,6 +1292,235 @@ async def get_active_work_sessions(db: Session = Depends(get_db)):
 
 
 # ============================================================================
+# COLLABORATION ENDPOINTS (CRITICAL FEATURE)
+# ============================================================================
+
+@app.post("/api/v1/collaboration/{ticket_id}/add", tags=["Collaboration"])
+async def add_collaborator(ticket_id: int, data: dict, db: Session = Depends(get_db)):
+    """
+    Add collaborator to ticket
+
+    Source: /backend/app/main.py:1600-1634
+
+    Body:
+    {
+        "team_member_id": 123,
+        "role": "secondary" (optional: primary, secondary, consultant, observer)
+    }
+    """
+    try:
+        team_member_id = data.get("team_member_id")
+        role = data.get("role", "secondary")
+
+        if not team_member_id:
+            raise HTTPException(status_code=400, detail="team_member_id is required")
+
+        # Get ticket
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        # Get team member
+        member = db.query(TeamMember).filter(TeamMember.id == team_member_id).first()
+        if not member:
+            raise HTTPException(status_code=404, detail="Team member not found")
+
+        # Check if already collaborating
+        existing = db.query(TicketCollaboration).filter(
+            TicketCollaboration.ticket_id == ticket_id,
+            TicketCollaboration.team_member_id == team_member_id,
+            TicketCollaboration.is_active == True
+        ).first()
+
+        if existing:
+            logger.warning(f"{member.name} already collaborating on ticket #{ticket.redmine_ticket_id}")
+            return {"success": True, "collaboration_id": existing.id, "already_exists": True}
+
+        # Create collaboration record
+        collaboration = TicketCollaboration(
+            ticket_id=ticket_id,
+            team_member_id=team_member_id,
+            role=role,
+            is_active=True,
+            joined_at=datetime.now(timezone.utc)
+        )
+        db.add(collaboration)
+
+        # Update ticket flags
+        ticket.is_collaborative = True
+        active_collabs = db.query(TicketCollaboration).filter(
+            TicketCollaboration.ticket_id == ticket_id,
+            TicketCollaboration.is_active == True
+        ).count()
+        ticket.collaborator_count = active_collabs + 1
+
+        db.commit()
+        db.refresh(collaboration)
+
+        logger.info(f"✅ Added {member.name} as {role} to ticket #{ticket.redmine_ticket_id}")
+
+        return {
+            "success": True,
+            "collaboration_id": collaboration.id,
+            "team_member": {
+                "id": member.id,
+                "name": member.name,
+                "email": member.email
+            },
+            "role": role
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Failed to add collaborator: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/collaboration/{ticket_id}/remove/{team_member_id}", tags=["Collaboration"])
+async def remove_collaborator(
+    ticket_id: int,
+    team_member_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Remove collaborator from ticket
+
+    Source: /backend/app/main.py:1637-1650
+    """
+    try:
+        # Find active collaboration
+        collaboration = db.query(TicketCollaboration).filter(
+            TicketCollaboration.ticket_id == ticket_id,
+            TicketCollaboration.team_member_id == team_member_id,
+            TicketCollaboration.is_active == True
+        ).first()
+
+        if not collaboration:
+            raise HTTPException(status_code=404, detail="No active collaboration found")
+
+        # Mark as inactive
+        collaboration.is_active = False
+        collaboration.left_at = datetime.now(timezone.utc)
+
+        # Update ticket collaborator count
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if ticket:
+            active_collabs = db.query(TicketCollaboration).filter(
+                TicketCollaboration.ticket_id == ticket_id,
+                TicketCollaboration.is_active == True
+            ).count()
+
+            ticket.collaborator_count = active_collabs - 1
+
+            if ticket.collaborator_count <= 0:
+                ticket.is_collaborative = False
+                ticket.collaborator_count = 0
+
+        db.commit()
+
+        logger.info(f"✅ Removed collaborator from ticket #{ticket.redmine_ticket_id if ticket else ticket_id}")
+
+        return {"success": True}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Failed to remove collaborator: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/collaboration/{ticket_id}", tags=["Collaboration"])
+async def get_collaboration_summary(ticket_id: int, db: Session = Depends(get_db)):
+    """
+    Get collaboration summary for ticket
+
+    Source: /backend/app/main.py:1653-1658
+    """
+    try:
+        ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        # Get all active collaborators
+        active_collaborations = db.query(TicketCollaboration).filter(
+            TicketCollaboration.ticket_id == ticket_id,
+            TicketCollaboration.is_active == True
+        ).all()
+
+        # Get past collaborators count
+        past_collaborators = db.query(TicketCollaboration).filter(
+            TicketCollaboration.ticket_id == ticket_id,
+            TicketCollaboration.is_active == False
+        ).count()
+
+        # Build collaborators list
+        collaborators_list = []
+        total_time = 0.0
+        total_comments = 0
+
+        for collab in active_collaborations:
+            member = collab.team_member
+            if not member:
+                continue
+
+            team_level = member.team_level.value if hasattr(member.team_level, 'value') else str(member.team_level)
+
+            collaborators_list.append({
+                "id": collab.id,
+                "ticket_id": collab.ticket_id,
+                "team_member_id": collab.team_member_id,
+                "team_member": {
+                    "id": member.id,
+                    "name": member.name,
+                    "email": member.email,
+                    "team_level": team_level
+                },
+                "role": collab.role,
+                "joined_at": collab.joined_at.isoformat() if collab.joined_at else None,
+                "left_at": collab.left_at.isoformat() if collab.left_at else None,
+                "is_active": collab.is_active,
+                "comments_count": collab.comments_count or 0,
+                "time_spent_hours": collab.time_spent_hours or 0.0
+            })
+
+            total_time += (collab.time_spent_hours or 0.0)
+            total_comments += (collab.comments_count or 0)
+
+        # Get primary assignee
+        primary_assignee = None
+        if ticket.assigned_to:
+            primary_assignee = {
+                "id": ticket.assigned_to.id,
+                "name": ticket.assigned_to.name,
+                "email": ticket.assigned_to.email
+            }
+
+        logger.info(f"✅ Retrieved collaboration summary for ticket #{ticket.redmine_ticket_id}: {len(collaborators_list)} active")
+
+        return {
+            "success": True,
+            "ticket_id": ticket.redmine_ticket_id,
+            "is_collaborative": ticket.is_collaborative,
+            "active_collaborators": len(collaborators_list),
+            "past_collaborators": past_collaborators,
+            "total_collaborators": len(collaborators_list) + past_collaborators,
+            "collaborators": collaborators_list,
+            "total_time_spent_hours": round(total_time, 2),
+            "total_comments": total_comments,
+            "primary_assignee": primary_assignee
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to get collaboration summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # LEGACY ENDPOINTS (Phase 2)
 # ============================================================================
 
