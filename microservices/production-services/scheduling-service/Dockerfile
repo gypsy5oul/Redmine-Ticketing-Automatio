@@ -10,16 +10,16 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY scheduling-service/requirements.txt .
+COPY production-services/scheduling-service/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared utilities (authentication and logging)
-COPY ../shared /app/shared
+COPY shared /app/shared
 
 # Copy application code
-COPY scheduling-service/main.py .
+COPY production-services/scheduling-service/main.py .
 
 # Expose the service port
 EXPOSE 8010

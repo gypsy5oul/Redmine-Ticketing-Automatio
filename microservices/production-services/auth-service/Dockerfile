@@ -10,13 +10,13 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
-COPY auth-service/requirements.txt .
+COPY production-services/auth-service/requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY auth-service/main.py .
+COPY production-services/auth-service/main.py .
 
 # Expose the service port
 EXPOSE 8001

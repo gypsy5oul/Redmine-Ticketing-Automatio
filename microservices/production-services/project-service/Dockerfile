@@ -9,14 +9,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements
-COPY project-service/requirements.txt .
+COPY production-services/project-service/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy shared utilities (authentication and logging)
-COPY ../shared /app/shared
+COPY shared /app/shared
 
 # Copy application
-COPY project-service/main.py .
+COPY production-services/project-service/main.py .
 
 # Expose port
 EXPOSE 8011
