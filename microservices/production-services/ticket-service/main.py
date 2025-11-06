@@ -18,6 +18,7 @@ Endpoints:
 """
 
 import os
+import sys
 import enum
 import json
 import hashlib
@@ -25,10 +26,23 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, status, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    log_error,
+    get_current_user,
+    require_admin,
+    User
+)
 
 # Database
 from sqlalchemy import (
@@ -525,6 +539,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Setup enhanced logging with request tracking
+logger = setup_logging("ticket-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -547,6 +564,8 @@ async def health_check():
 
 @app.get("/api/v1/tickets", tags=["Tickets"])
 async def get_tickets(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     assigned_to_id: Optional[int] = None,
@@ -555,7 +574,8 @@ async def get_tickets(
     offset: int = 0,
     db: Session = Depends(get_db)
 ):
-    """Get tickets with filters"""
+    """Get tickets with filters - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/tickets")
     try:
         query = db.query(TicketHistory)
 
@@ -598,8 +618,14 @@ async def get_tickets(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
-async def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
-    """Get single ticket"""
+async def get_ticket(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get single ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/tickets/{ticket_id}")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
 
@@ -633,8 +659,14 @@ async def get_ticket(ticket_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/tickets/process", tags=["Tickets"])
-async def process_ticket(ticket_data: dict, db: Session = Depends(get_db)):
-    """Process new ticket from Redmine"""
+async def process_ticket(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    ticket_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Process new ticket from Redmine - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "POST /api/v1/tickets/process")
     try:
         # Create ticket
         ticket = TicketHistory(
@@ -677,8 +709,15 @@ async def process_ticket(ticket_data: dict, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/v1/tickets/{ticket_id}", tags=["Tickets"])
-async def update_ticket(ticket_id: int, update_data: dict, db: Session = Depends(get_db)):
-    """Update ticket"""
+async def update_ticket(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    update_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Update ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"PUT /api/v1/tickets/{ticket_id}")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
 
@@ -712,8 +751,15 @@ async def update_ticket(ticket_id: int, update_data: dict, db: Session = Depends
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/tickets/{ticket_id}/resolve", tags=["Tickets"])
-async def resolve_ticket(ticket_id: int, resolution_data: dict, db: Session = Depends(get_db)):
-    """Resolve ticket"""
+async def resolve_ticket(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    resolution_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Resolve ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"POST /api/v1/tickets/{ticket_id}/resolve")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
 
@@ -749,8 +795,14 @@ async def resolve_ticket(ticket_id: int, resolution_data: dict, db: Session = De
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/tickets/{ticket_id}/comments", tags=["Comments"])
-async def get_comments(ticket_id: int, db: Session = Depends(get_db)):
-    """Get ticket comments"""
+async def get_comments(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get ticket comments - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/tickets/{ticket_id}/comments")
     try:
         comments = db.query(TicketComment).filter(
             TicketComment.ticket_id == ticket_id
@@ -777,8 +829,15 @@ async def get_comments(ticket_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/tickets/{ticket_id}/comments", tags=["Comments"])
-async def add_comment(ticket_id: int, comment_data: dict, db: Session = Depends(get_db)):
-    """Add comment to ticket"""
+async def add_comment(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    comment_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Add comment to ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"POST /api/v1/tickets/{ticket_id}/comments")
     try:
         comment = TicketComment(
             ticket_id=ticket_id,
@@ -805,8 +864,15 @@ async def add_comment(ticket_id: int, comment_data: dict, db: Session = Depends(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/v1/comments/{comment_id}", tags=["Comments"])
-async def update_comment(comment_id: int, content: str, db: Session = Depends(get_db)):
-    """Update comment"""
+async def update_comment(
+    comment_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    content: str = None,
+    db: Session = Depends(get_db)
+):
+    """Update comment - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"PUT /api/v1/comments/{comment_id}")
     try:
         comment = db.query(TicketComment).filter(TicketComment.id == comment_id).first()
 
@@ -832,8 +898,14 @@ async def update_comment(comment_id: int, content: str, db: Session = Depends(ge
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/v1/comments/{comment_id}", tags=["Comments"])
-async def delete_comment(comment_id: int, db: Session = Depends(get_db)):
-    """Delete comment"""
+async def delete_comment(
+    comment_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Delete comment - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"DELETE /api/v1/comments/{comment_id}")
     try:
         comment = db.query(TicketComment).filter(TicketComment.id == comment_id).first()
 
@@ -871,12 +943,18 @@ def _enum_value(value):
     return value.value if hasattr(value, "value") else value
 
 @app.post("/api/v1/tickets/{ticket_id}/work/start", tags=["Work Sessions"])
-async def start_work_session(ticket_id: int, db: Session = Depends(get_db)):
+async def start_work_session(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Start active work on a ticket
+    Start active work on a ticket - Requires: Any authenticated user
 
     Source: /backend/app/api/v1/work_sessions.py:111-145
     """
+    log_request(logger, request, user.id, f"POST /api/v1/tickets/{ticket_id}/work/start")
     try:
         now = datetime.now(timezone.utc)
 
@@ -966,12 +1044,14 @@ async def start_work_session(ticket_id: int, db: Session = Depends(get_db)):
 @app.post("/api/v1/tickets/{ticket_id}/work/pause", tags=["Work Sessions"])
 async def pause_work_session(
     ticket_id: int,
-    reason: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    reason: str = None,
     notes: str = None,
     db: Session = Depends(get_db)
 ):
     """
-    Pause active work and enter waiting state
+    Pause active work and enter waiting state - Requires: Any authenticated user
 
     Source: /backend/app/api/v1/work_sessions.py:148-192
 
@@ -979,6 +1059,7 @@ async def pause_work_session(
         reason: waiting_customer, waiting_approval, waiting_deployment, waiting_external
         notes: Optional context
     """
+    log_request(logger, request, user.id, f"POST /api/v1/tickets/{ticket_id}/work/pause")
     try:
         now = datetime.now(timezone.utc)
 
@@ -1069,12 +1150,18 @@ async def pause_work_session(
 
 
 @app.post("/api/v1/tickets/{ticket_id}/work/resume", tags=["Work Sessions"])
-async def resume_work_session(ticket_id: int, db: Session = Depends(get_db)):
+async def resume_work_session(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Resume active work on a ticket
+    Resume active work on a ticket - Requires: Any authenticated user
 
     Source: /backend/app/api/v1/work_sessions.py:194-232
     """
+    log_request(logger, request, user.id, f"POST /api/v1/tickets/{ticket_id}/work/resume")
     try:
         now = datetime.now(timezone.utc)
 
@@ -1164,12 +1251,18 @@ async def resume_work_session(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/tickets/{ticket_id}/work/summary", tags=["Work Sessions"])
-async def get_work_summary(ticket_id: int, db: Session = Depends(get_db)):
+async def get_work_summary(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Get complete work session summary for a ticket
+    Get complete work session summary for a ticket - Requires: Any authenticated user
 
     Source: /backend/app/api/v1/work_sessions.py:234-256
     """
+    log_request(logger, request, user.id, f"GET /api/v1/tickets/{ticket_id}/work/summary")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
         if not ticket:
@@ -1240,14 +1333,19 @@ async def get_work_summary(ticket_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/work/active", tags=["Work Sessions"])
-async def get_active_work_sessions(db: Session = Depends(get_db)):
+async def get_active_work_sessions(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Get all active work sessions
+    Get all active work sessions - Requires: Any authenticated user
 
     Source: /backend/app/api/v1/work_sessions.py:258-278
 
     Returns active sessions across all engineers (for now - simplified version)
     """
+    log_request(logger, request, user.id, "GET /api/v1/work/active")
     try:
         # Get all active sessions
         active_sessions = db.query(WorkSession).filter(
@@ -1296,9 +1394,15 @@ async def get_active_work_sessions(db: Session = Depends(get_db)):
 # ============================================================================
 
 @app.post("/api/v1/collaboration/{ticket_id}/add", tags=["Collaboration"])
-async def add_collaborator(ticket_id: int, data: dict, db: Session = Depends(get_db)):
+async def add_collaborator(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    data: dict = None,
+    db: Session = Depends(get_db)
+):
     """
-    Add collaborator to ticket
+    Add collaborator to ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1600-1634
 
@@ -1308,6 +1412,7 @@ async def add_collaborator(ticket_id: int, data: dict, db: Session = Depends(get
         "role": "secondary" (optional: primary, secondary, consultant, observer)
     }
     """
+    log_request(logger, request, user.id, f"POST /api/v1/collaboration/{ticket_id}/add")
     try:
         team_member_id = data.get("team_member_id")
         role = data.get("role", "secondary")
@@ -1382,13 +1487,16 @@ async def add_collaborator(ticket_id: int, data: dict, db: Session = Depends(get
 async def remove_collaborator(
     ticket_id: int,
     team_member_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """
-    Remove collaborator from ticket
+    Remove collaborator from ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1637-1650
     """
+    log_request(logger, request, user.id, f"DELETE /api/v1/collaboration/{ticket_id}/remove/{team_member_id}")
     try:
         # Find active collaboration
         collaboration = db.query(TicketCollaboration).filter(
@@ -1433,12 +1541,18 @@ async def remove_collaborator(
 
 
 @app.get("/api/v1/collaboration/{ticket_id}", tags=["Collaboration"])
-async def get_collaboration_summary(ticket_id: int, db: Session = Depends(get_db)):
+async def get_collaboration_summary(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
     """
-    Get collaboration summary for ticket
+    Get collaboration summary for ticket - Requires: Any authenticated user
 
     Source: /backend/app/main.py:1653-1658
     """
+    log_request(logger, request, user.id, f"GET /api/v1/collaboration/{ticket_id}")
     try:
         ticket = db.query(TicketHistory).filter(TicketHistory.id == ticket_id).first()
         if not ticket:
@@ -1525,15 +1639,21 @@ async def get_collaboration_summary(ticket_id: int, db: Session = Depends(get_db
 # ============================================================================
 
 @app.post("/process-tickets", tags=["Tickets - Legacy"])
-async def process_tickets_legacy(ticket_data: dict = None, db: Session = Depends(get_db)):
+async def process_tickets_legacy(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    ticket_data: dict = None,
+    db: Session = Depends(get_db)
+):
     """
-    Legacy endpoint for backward compatibility
+    Legacy endpoint for backward compatibility - Requires: Any authenticated user
 
     Source: /backend/app/main.py:751-766
 
     DEPRECATED: Use /api/v1/tickets/process instead
     This endpoint exists for backward compatibility with old integrations
     """
+    log_request(logger, request, user.id, "POST /process-tickets")
     try:
         logger.warning("⚠️ Legacy endpoint /process-tickets called - please update to /api/v1/tickets/process")
 
