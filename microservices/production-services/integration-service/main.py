@@ -89,6 +89,62 @@ async def get_user(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/v1/redmine/group-members", tags=["Redmine"])
+async def get_redmine_group_members(group_id: int = None):
+    """
+    Fetch all users from Redmine DevOps group
+
+    Source: /backend/app/main.py:2338-2357
+
+    This endpoint fetches users from the configured DevOps Team group in Redmine,
+    including detailed information like email and login. Used for adding new team members.
+    """
+    try:
+        redmine = RedmineService()
+
+        # Use default DevOps group ID if not specified
+        if group_id is None:
+            group_id = int(os.getenv("DEVOPS_TEAM_GROUP_ID", "10"))
+
+        url = f"{redmine.base_url}/groups/{group_id}.json?include=users"
+
+        response = requests.get(url, headers=redmine.headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+
+        users = data.get('group', {}).get('users', [])
+
+        # Enrich with detailed user info
+        detailed_users = []
+        for user in users:
+            user_detail = redmine.get_user(user['id'])
+            if user_detail:
+                detailed_users.append(user_detail)
+            else:
+                # Fallback to basic info
+                detailed_users.append({
+                    'id': user['id'],
+                    'name': user['name'],
+                    'email': None,
+                    'login': None
+                })
+
+        logger.info(f"✅ Fetched {len(detailed_users)} users from Redmine group {group_id}")
+
+        return {
+            "success": True,
+            "count": len(detailed_users),
+            "members": detailed_users
+        }
+
+    except requests.RequestException as e:
+        logger.error(f"❌ Failed to fetch group members: {e}")
+        raise HTTPException(status_code=500, detail=f"Redmine API error: {str(e)}")
+    except Exception as e:
+        logger.error(f"❌ Unexpected error fetching group members: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/v1/redmine/sync-statuses", tags=["Redmine"])
 async def sync_redmine_statuses():
     """
