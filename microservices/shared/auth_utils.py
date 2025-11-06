@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from enum import Enum
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from loguru import logger as loguru_logger
@@ -241,7 +241,7 @@ def decode_token(token: str) -> Dict[str, Any]:
 # ============================================================================
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """
@@ -308,7 +308,7 @@ async def get_current_user(
 
 
 async def get_current_user_optional(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> Optional[User]:
     """
@@ -334,7 +334,7 @@ async def get_current_user_optional(
 
 async def require_role(
     allowed_roles: List[str],
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """
@@ -363,7 +363,7 @@ async def require_role(
 
 
 async def require_super_admin(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """Require SUPER_ADMIN role"""
@@ -371,7 +371,7 @@ async def require_super_admin(
 
 
 async def require_admin(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """Require ADMIN or SUPER_ADMIN role"""
@@ -383,7 +383,7 @@ async def require_admin(
 
 
 async def require_manager(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """Require MANAGER, ADMIN, or SUPER_ADMIN role"""
@@ -395,7 +395,7 @@ async def require_manager(
 
 
 async def require_engineer(
-    credentials: Optional[HTTPAuthorizationCredentials] = None,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     authorization: Optional[str] = Header(None)
 ) -> User:
     """Require any engineer level (L1, L2, L3) or above"""

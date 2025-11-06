@@ -1249,8 +1249,11 @@ async def delete_comment(
 # ============================================================================
 
 @app.get("/api/v1/sla/policies", tags=["SLA"])
-async def get_sla_policies(db: Session = Depends(get_db)):
-    """Get all SLA policies"""
+async def get_sla_policies(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get all SLA policies - Requires authentication"""
     try:
         from app.models.sla import SLAPolicy
 
@@ -1286,9 +1289,10 @@ async def create_sla_policy(
     escalation_time_minutes: int = 180,
     environment: Optional[str] = None,
     business_hours_only: bool = True,
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Create a new SLA policy"""
+    """Create a new SLA policy - Requires admin authentication"""
     try:
         from app.models.sla import SLAPolicy
 
@@ -1342,9 +1346,10 @@ async def create_sla_policy(
 async def update_sla_policy(
     policy_id: int,
     policy_data: dict,
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Update an SLA policy"""
+    """Update an SLA policy - Requires admin authentication"""
     try:
         from app.models.sla import SLAPolicy
 
@@ -1387,16 +1392,23 @@ async def update_sla_policy(
 
 
 @app.get("/api/v1/sla/status/{ticket_id}", tags=["SLA"])
-async def get_sla_status(ticket_id: int, db: Session = Depends(get_db)):
-    """Get SLA status for a ticket"""
+async def get_sla_status(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get SLA status for a ticket - Requires authentication"""
     sla_manager = SLAManager(db)
     status = sla_manager.get_sla_status(ticket_id)
     return status
 
 
 @app.get("/api/v1/sla/at-risk", tags=["SLA"])
-async def get_at_risk_tickets(db: Session = Depends(get_db)):
-    """Get tickets at risk of SLA breach"""
+async def get_at_risk_tickets(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get tickets at risk of SLA breach - Requires authentication"""
     try:
         from app.models.sla import SLATracker, SLAStatus
         from app.models.ticket import TicketHistory
@@ -1446,16 +1458,24 @@ async def get_at_risk_tickets(db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/sla/{ticket_id}/pause", tags=["SLA"])
-async def pause_sla(ticket_id: int, db: Session = Depends(get_db)):
-    """Pause SLA timer (e.g., waiting for customer)"""
+async def pause_sla(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Pause SLA timer (e.g., waiting for customer) - Requires authentication"""
     sla_manager = SLAManager(db)
     sla_manager.pause_sla(ticket_id)
     return {"message": "SLA paused", "ticket_id": ticket_id}
 
 
 @app.post("/api/v1/sla/{ticket_id}/resume", tags=["SLA"])
-async def resume_sla(ticket_id: int, db: Session = Depends(get_db)):
-    """Resume SLA timer"""
+async def resume_sla(
+    ticket_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Resume SLA timer - Requires authentication"""
     sla_manager = SLAManager(db)
     sla_manager.resume_sla(ticket_id)
     return {"message": "SLA resumed", "ticket_id": ticket_id}

@@ -209,28 +209,9 @@ class TicketHistory(Base):
 # ============================================================================
 # SECURITY
 # ============================================================================
-
-def decode_token(token: str) -> Dict[str, Any]:
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        return payload
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-
-async def get_current_user(token: str = Depends(lambda: None), db: Session = Depends(get_db)) -> User:
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
-    payload = decode_token(token)
-    username = payload.get("sub")
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not user.active:
-        raise HTTPException(status_code=401, detail="User not found")
-    return user
-
-async def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role not in [UserRole.ADMIN, UserRole.SUPER_ADMIN]:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return current_user
+# Note: Authentication functions (get_current_user, require_admin, decode_token)
+# are imported from shared/auth_utils.py at the top of this file.
+# No local overrides needed - the shared implementations handle token extraction correctly.
 
 # ============================================================================
 # SLA MANAGER SERVICE
