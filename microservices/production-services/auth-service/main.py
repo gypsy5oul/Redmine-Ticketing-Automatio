@@ -28,6 +28,9 @@ import os
 # ============================================================================
 
 class Settings(BaseSettings):
+    # Service
+    SERVICE_PORT: int = 8001
+
     # Database
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password@postgres:5432/devops_tickets")
 
@@ -701,7 +704,7 @@ async def reset_user_password(
 @app.on_event("startup")
 async def startup_event():
     logger.info("🚀 Starting Auth Service v1.0.0")
-    logger.info("✅ Auth Service started successfully on port 8001")
+    logger.info(f"✅ Auth Service started successfully on port {settings.SERVICE_PORT}")
 
 
 @app.on_event("shutdown")
@@ -711,4 +714,4 @@ async def shutdown_event():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=settings.SERVICE_PORT)
