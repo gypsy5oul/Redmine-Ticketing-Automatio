@@ -12,16 +12,28 @@ Source: /backend/app/api/v1/projects.py
 """
 
 import os
+import sys
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, Float, Text, func, case, and_
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session, sessionmaker
-from loguru import logger
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    log_error,
+    get_current_user,
+    User
+)
 
 class Settings(BaseSettings):
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets")
@@ -42,6 +54,9 @@ def get_db():
         db.close()
 
 app = FastAPI(title="Project Service", version="1.0.0")
+
+# Setup enhanced logging with request tracking
+logger = setup_logging("project-service", os.getenv("LOG_LEVEL", "INFO"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,13 +140,16 @@ async def health_check():
 
 @app.get("/api/v1/projects", response_model=ProjectSummaryListResponse, tags=["Projects"])
 async def list_projects(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db)
 ):
     """
-    List all Jira projects with ticket metrics
+    List all Jira projects with ticket metrics - Requires: Any authenticated user
     Source: /backend/app/api/v1/projects.py:22-38
     """
+    log_request(logger, request, user.id, "GET /api/v1/projects")
     try:
         from sqlalchemy import Table, MetaData
         metadata = MetaData()
@@ -230,12 +248,15 @@ async def list_projects(
 @app.get("/api/v1/projects/{project_jira_id}", response_model=ProjectDetailResponse, tags=["Projects"])
 async def get_project_detail(
     project_jira_id: str,
+    user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """
-    Get detailed metrics for a Jira project
+    Get detailed metrics for a Jira project - Requires: Any authenticated user
     Source: /backend/app/api/v1/projects.py:41-61
     """
+    log_request(logger, request, user.id, f"GET /api/v1/projects/{project_jira_id}")
     try:
         from sqlalchemy import Table, MetaData
         metadata = MetaData()
