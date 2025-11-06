@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://ticketing_user:securepassword@localhost:5432/ticketing_db"
+        "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets"
     )
 
     # Redis

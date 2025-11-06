@@ -31,7 +31,7 @@ from loguru import logger
 # ============================================================================
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://ticketing_user:securepassword@localhost:5432/ticketing_db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets")
     REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key")

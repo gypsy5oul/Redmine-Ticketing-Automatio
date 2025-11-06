@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from loguru import logger
 
 class Settings(BaseSettings):
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://ticketing_user:securepassword@localhost:5432/ticketing_db")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets")
     SERVICE_NAME: str = "worksession-service"
     SERVICE_PORT: int = 8011
 
