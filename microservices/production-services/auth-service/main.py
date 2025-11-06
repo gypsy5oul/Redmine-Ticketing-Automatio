@@ -7,7 +7,7 @@ Purpose: Authentication, Authorization, User Management
 This service is completely independent with all code duplicated.
 """
 
-from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
+from fastapi import FastAPI, Depends, HTTPException, status, APIRouter, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum as SQLEnum, create_engine
@@ -19,9 +19,13 @@ from pydantic import BaseModel, EmailStr, Field
 from pydantic_settings import BaseSettings
 from passlib.context import CryptContext
 from jose import JWTError, jwt
-from loguru import logger
 import enum
 import os
+import sys
+
+# Add shared module for logging
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.auth_utils import setup_logging, log_request
 
 # ============================================================================
 # Configuration (Duplicated from app/core/config.py)
@@ -411,6 +415,9 @@ app = FastAPI(
     description="Authentication & User Management Microservice"
 )
 
+# Setup enhanced logging
+logger = setup_logging("auth-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
@@ -439,8 +446,9 @@ async def health_check():
 # ============================================================================
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
-async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
-    """Login with username/password"""
+async def login(login_data: LoginRequest, request: Request = None, db: Session = Depends(get_db)):
+    """Login with username/password - Public endpoint"""
+    log_request(logger, request, None, "POST /api/v1/auth/login")
     user_service = UserService(db)
     user = user_service.authenticate(login_data.username, login_data.password)
 
@@ -479,8 +487,9 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/auth/refresh", response_model=LoginResponse)
-async def refresh_token_endpoint(refresh_data: RefreshRequest, db: Session = Depends(get_db)):
-    """Refresh access token"""
+async def refresh_token_endpoint(refresh_data: RefreshRequest, request: Request = None, db: Session = Depends(get_db)):
+    """Refresh access token - Public endpoint"""
+    log_request(logger, request, None, "POST /api/v1/auth/refresh")
     try:
         payload = decode_token(refresh_data.refresh_token)
 
@@ -522,8 +531,9 @@ async def refresh_token_endpoint(refresh_data: RefreshRequest, db: Session = Dep
 
 
 @app.get("/api/v1/auth/me", response_model=UserResponse)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
-    """Get current user info"""
+async def get_current_user_info(current_user: User = Depends(get_current_user), request: Request = None):
+    """Get current user info - Requires: Any authenticated user"""
+    log_request(logger, request, current_user.id, "GET /api/v1/auth/me")
     return {
         "id": current_user.id,
         "username": current_user.username,
@@ -536,8 +546,9 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 
 
 @app.post("/api/v1/auth/logout")
-async def logout(current_user: User = Depends(get_current_user)):
-    """Logout (client-side token discard)"""
+async def logout(current_user: User = Depends(get_current_user), request: Request = None):
+    """Logout (client-side token discard) - Requires: Any authenticated user"""
+    log_request(logger, request, current_user.id, "POST /api/v1/auth/logout")
     logger.info(f"✅ User '{current_user.username}' logged out")
     return {
         "message": "Logged out successfully",
@@ -549,9 +560,11 @@ async def logout(current_user: User = Depends(get_current_user)):
 async def change_password(
     password_data: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Change password"""
+    """Change password - Requires: Any authenticated user"""
+    log_request(logger, request, current_user.id, "POST /api/v1/auth/change-password")
     user_service = UserService(db)
 
     authenticated_user = user_service.authenticate(current_user.username, password_data.old_password)
@@ -577,9 +590,11 @@ async def change_password(
 async def create_user(
     user_data: CreateUserRequest,
     current_user: User = Depends(require_admin),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Create new user (admin only)"""
+    """Create new user (admin only) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, current_user.id, "POST /api/v1/auth/users")
     user_service = UserService(db)
 
     try:
@@ -609,9 +624,11 @@ async def create_user(
 @app.get("/api/v1/auth/users")
 async def list_users(
     current_user: User = Depends(require_admin),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """List all users (admin only)"""
+    """List all users (admin only) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, current_user.id, "GET /api/v1/auth/users")
     users = db.query(User).all()
 
     return {
@@ -635,9 +652,11 @@ async def list_users(
 async def deactivate_user(
     user_id: int,
     current_user: User = Depends(require_admin),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Deactivate user (admin only)"""
+    """Deactivate user (admin only) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, current_user.id, f"PUT /api/v1/auth/users/{user_id}/deactivate")
     if user_id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot deactivate your own account")
 
@@ -654,9 +673,11 @@ async def deactivate_user(
 async def activate_user(
     user_id: int,
     current_user: User = Depends(require_admin),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Activate user (admin only)"""
+    """Activate user (admin only) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, current_user.id, f"PUT /api/v1/auth/users/{user_id}/activate")
     user_service = UserService(db)
     success = user_service.activate_user(user_id)
 
@@ -671,9 +692,11 @@ async def reset_user_password(
     user_id: int,
     password_data: ResetPasswordRequest,
     current_user: User = Depends(require_admin),
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
-    """Reset user password (admin only)"""
+    """Reset user password (admin only) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, current_user.id, f"POST /api/v1/auth/users/{user_id}/reset-password")
     user_service = UserService(db)
     target_user = user_service.get_by_id(user_id)
 
