@@ -1,0 +1,49 @@
+# General OS/filesystem
+.DS_Store
+Thumbs.db
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+
+# Logs and backups
+logs/
+backups/
+*.log
+
+# Environment and credentials files
+*.env
+!.env.example
+USER_CREDENTIALS.txt
+
+# Backend artifacts
+backend/logs/
+backend/models/
+backend/.pytest_cache/
+
+# Test and coverage outputs
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Tooling
+.claude/
+
+# Misc
+a.out
+*.swp

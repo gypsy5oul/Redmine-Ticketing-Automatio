@@ -1,0 +1,46 @@
+DevOps Ticket Management System v3.0 - Configuration Summary
+================================================================
+
+Server Information:
+- Server IP: 10.0.6.31
+- OS: Linux 5.14.0-570.44.1.el9_6.x86_64
+
+LLM Configuration:
+- Model: qwen2.5-coder-32b (vLLM)
+- Endpoint: http://10.0.6.31:8000/v1
+- Status: Running (PID 89754)
+
+Port Allocation:
+- 8000: vLLM Server (already running)
+- 8001: Backend API (FastAPI)
+- 3000: Frontend (React + Nginx)
+- 5432: PostgreSQL
+- 6379: Redis
+
+Docker Services:
+1. postgres:5432    - PostgreSQL 15 database
+2. redis:6379       - Redis 7 cache
+3. backend:8001     - FastAPI Python backend
+4. frontend:3000    - React TypeScript admin portal
+
+Access URLs:
+- Admin Portal:  http://10.0.6.31:3000
+- Backend API:   http://10.0.6.31:8001
+- API Docs:      http://10.0.6.31:8001/api/docs
+- vLLM Server:   http://10.0.6.31:8000/v1
+
+Required Configuration in .env:
+- REDMINE_API_KEY: Get from Redmine > My Account > API access key
+- GOOGLE_CHAT_WEBHOOK: Get from Google Chat space settings
+
+Quick Start:
+1. Edit .env file with your credentials
+2. Run: ./start.sh
+3. Access frontend at http://10.0.6.31:3000
+
+Commands:
+- Start:    docker-compose up -d
+- Stop:     docker-compose down
+- Logs:     docker-compose logs -f
+- Restart:  docker-compose restart
+- Status:   docker-compose ps

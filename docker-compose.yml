@@ -1,0 +1,260 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: devops-tickets-db
+    environment:
+      POSTGRES_DB: devops_tickets
+      POSTGRES_USER: devops_user
+      POSTGRES_PASSWORD: devops_password_change_this
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: ${TZ:-UTC}
+      PGTZ: ${TZ:-UTC}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devops_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - devops-network
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: devops-tickets-redis
+    environment:
+      TZ: ${TZ:-UTC}
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - devops-network
+    restart: unless-stopped
+
+  # Backend API (Multiple Workers, No Scheduler)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devops-tickets-backend
+    environment:
+      # Application
+      APP_NAME: "DevOps Ticket Management System"
+      APP_VERSION: "3.0.0"
+      ENVIRONMENT: "production"
+      DEBUG: "False"
+      SECRET_KEY: "FO8o7avHvo0R9wZbn8RG3oagNyBgGa0bdlhxDP-bxBYXiUJi96nUEjrMqqpkwMtl"
+
+      # Database
+      DATABASE_URL: "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets"
+      DATABASE_POOL_SIZE: "20"
+      DATABASE_MAX_OVERFLOW: "10"
+
+      # Redis
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_MAX_CONNECTIONS: "50"
+
+      # Redmine
+      REDMINE_BASE_URL: "${REDMINE_BASE_URL}"
+      REDMINE_API_KEY: "${REDMINE_API_KEY}"
+      DEVOPS_PROJECT_ID: "${DEVOPS_PROJECT_ID:-1}"
+      DEVOPS_TEAM_GROUP_ID: "${DEVOPS_TEAM_GROUP_ID:-6}"
+
+      # LLM (External server at 10.0.6.31)
+      LLM_BASE_URL: "${LLM_BASE_URL:-http://10.0.6.31:8000/v1}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5-coder-32b}"
+      LLM_TIMEOUT: "120"
+      LLM_MAX_TOKENS: "2000"
+      LLM_TEMPERATURE: "0.7"
+
+      # Notifications
+      GOOGLE_CHAT_WEBHOOK: "${GOOGLE_CHAT_WEBHOOK}"
+      GOOGLE_CHAT_ENABLED: "True"
+
+      # Scheduler - DISABLED for API workers
+      ENABLE_SCHEDULER: "False"
+      TICKET_PROCESSING_INTERVAL: "2"
+      SLA_CHECK_INTERVAL: "1"
+      ANALYTICS_UPDATE_INTERVAL: "60"
+
+      # ML
+      ML_MODELS_PATH: "./models"
+      ML_TRAINING_ENABLED: "True"
+      ML_MIN_TRAINING_SAMPLES: "50"
+
+      # JWT (min 32 chars required)
+      JWT_SECRET_KEY: "tpBbgAxUshBZiSQLA1M7TDAGBduGwWX1h8oOjN0yKsg"
+      JWT_ALGORITHM: "HS256"
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+
+      # CORS (JSON array format for Pydantic)
+      CORS_ORIGINS: '["http://10.0.2.121:3000","http://localhost:3000","http://10.0.2.121:8000","http://localhost:8000"]'
+
+      # Monitoring
+      PROMETHEUS_ENABLED: "True"
+
+      # Logging
+      LOG_LEVEL: "INFO"
+      LOG_FILE: "logs/app.log"
+
+      # Timezone
+      TZ: ${TZ:-UTC}
+
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/models:/app/models
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  # Dedicated Scheduler Service (Single Instance)
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: devops-tickets-scheduler
+    environment:
+      # Application
+      APP_NAME: "DevOps Ticket Management System"
+      APP_VERSION: "3.0.0"
+      ENVIRONMENT: "production"
+      DEBUG: "False"
+      SECRET_KEY: "FO8o7avHvo0R9wZbn8RG3oagNyBgGa0bdlhxDP-bxBYXiUJi96nUEjrMqqpkwMtl"
+
+      # Database
+      DATABASE_URL: "postgresql://devops_user:devops_password_change_this@postgres:5432/devops_tickets"
+      DATABASE_POOL_SIZE: "10"
+      DATABASE_MAX_OVERFLOW: "5"
+
+      # Redis
+      REDIS_URL: "redis://redis:6379/0"
+      REDIS_MAX_CONNECTIONS: "20"
+
+      # Redmine
+      REDMINE_BASE_URL: "${REDMINE_BASE_URL}"
+      REDMINE_API_KEY: "${REDMINE_API_KEY}"
+      DEVOPS_PROJECT_ID: "${DEVOPS_PROJECT_ID:-1}"
+      DEVOPS_TEAM_GROUP_ID: "${DEVOPS_TEAM_GROUP_ID:-6}"
+
+      # LLM (External server at 10.0.6.31)
+      LLM_BASE_URL: "${LLM_BASE_URL:-http://10.0.6.31:8000/v1}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5-coder-32b}"
+      LLM_TIMEOUT: "120"
+      LLM_MAX_TOKENS: "2000"
+      LLM_TEMPERATURE: "0.7"
+
+      # Notifications
+      GOOGLE_CHAT_WEBHOOK: "${GOOGLE_CHAT_WEBHOOK}"
+      GOOGLE_CHAT_ENABLED: "True"
+
+      # Scheduler - ENABLED for scheduler service
+      ENABLE_SCHEDULER: "True"
+      TICKET_PROCESSING_INTERVAL: "2"
+      SLA_CHECK_INTERVAL: "1"
+      ANALYTICS_UPDATE_INTERVAL: "60"
+
+      # ML
+      ML_MODELS_PATH: "./models"
+      ML_TRAINING_ENABLED: "True"
+      ML_MIN_TRAINING_SAMPLES: "50"
+
+      # JWT (required by config.py)
+      JWT_SECRET_KEY: "tpBbgAxUshBZiSQLA1M7TDAGBduGwWX1h8oOjN0yKsg"
+      JWT_ALGORITHM: "HS256"
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: "30"
+
+      # Logging
+      LOG_LEVEL: "INFO"
+      LOG_FILE: "logs/scheduler.log"
+
+      # Timezone
+      TZ: ${TZ:-UTC}
+
+    command: ["python", "run_scheduler.py"]
+    volumes:
+      - ./backend/logs:/app/logs
+      - ./backend/models:/app/models
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devops-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; exit(0 if os.path.exists('/tmp/scheduler.running') else 1)"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  # Frontend Admin Portal
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: devops-tickets-frontend
+    environment:
+      VITE_API_BASE_URL: "http://10.0.2.121:8000"
+      VITE_WS_BASE_URL: "ws://10.0.2.121:8000"
+      TZ: ${TZ:-UTC}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - devops-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  devops-network:
+    driver: bridge
