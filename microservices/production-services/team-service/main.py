@@ -24,10 +24,24 @@ from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    log_error,
+    get_current_user,
+    require_admin,
+    require_manager,
+    User
+)
 
 # Database
 from sqlalchemy import (
@@ -504,6 +518,9 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Setup enhanced logging with request tracking
+logger = setup_logging("team-service", os.getenv("LOG_LEVEL", "INFO"))
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -532,17 +549,20 @@ async def health_check():
 
 @app.get("/api/v1/team/members", tags=["Team"])
 async def get_team_members(
+    user: User = Depends(get_current_user),
+    request: Request = None,
     team_level: Optional[str] = None,
     active_only: bool = True,
     db: Session = Depends(get_db)
 ):
     """
-    Get all team members
+    Get all team members - Requires: Any authenticated user
 
     Args:
         team_level: Filter by team level (L1, L2, L3)
         active_only: Only return active members (default: True)
     """
+    log_request(logger, request, user.id, "GET /api/v1/team/members")
     try:
         query = db.query(TeamMember)
 
@@ -587,8 +607,14 @@ async def get_team_members(
 
 
 @app.get("/api/v1/team/members/{member_id}", tags=["Team"])
-async def get_team_member(member_id: int, db: Session = Depends(get_db)):
-    """Get a single team member by ID"""
+async def get_team_member(
+    member_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get a single team member by ID - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/team/members/{member_id}")
     try:
         member = db.query(TeamMember).filter(TeamMember.id == member_id).first()
 
@@ -625,15 +651,18 @@ async def get_team_member(member_id: int, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/team/members", tags=["Team"])
 async def create_team_member(
-    data: dict,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    data: dict = None,
     db: Session = Depends(get_db)
 ):
     """
-    Create a new team member
+    Create a new team member - Requires: Admin or Super Admin role
 
     Note: In production, this would fetch from Redmine.
     For now, accepts all data in request body.
     """
+    log_request(logger, request, user.id, "POST /api/v1/team/members")
     try:
         redmine_user_id = data.get("redmine_user_id")
         team_level_str = data.get("team_level")
@@ -755,10 +784,13 @@ async def create_team_member(
 @app.put("/api/v1/team/members/{member_id}", tags=["Team"])
 async def update_team_member(
     member_id: int,
-    member_data: dict,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    member_data: dict = None,
     db: Session = Depends(get_db)
 ):
-    """Update team member details"""
+    """Update team member details - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"PUT /api/v1/team/members/{member_id}")
     try:
         member = db.query(TeamMember).filter(TeamMember.id == member_id).first()
 
@@ -815,8 +847,14 @@ async def update_team_member(
 
 
 @app.delete("/api/v1/team/members/{member_id}", tags=["Team"])
-async def delete_team_member(member_id: int, db: Session = Depends(get_db)):
-    """Soft delete a team member (mark as inactive)"""
+async def delete_team_member(
+    member_id: int,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Soft delete a team member (mark as inactive) - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"DELETE /api/v1/team/members/{member_id}")
     try:
         member = db.query(TeamMember).filter(TeamMember.id == member_id).first()
 
@@ -845,13 +883,14 @@ async def delete_team_member(member_id: int, db: Session = Depends(get_db)):
 @app.get("/api/v1/team/members/{member_id}/performance", tags=["Team"])
 async def get_member_performance(
     member_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_admin)
+    user: User = Depends(require_manager),
+    request: Request = None,
+    db: Session = Depends(get_db)
 ):
     """
-    Get individual team member performance metrics
-    Only accessible by ADMIN and SUPER_ADMIN roles
+    Get individual team member performance metrics - Requires: Manager, Admin, or Super Admin role
     """
+    log_request(logger, request, user.id, f"GET /api/v1/team/members/{member_id}/performance")
     try:
         # Get team member
         member = db.query(TeamMember).filter(TeamMember.id == member_id).first()
@@ -974,8 +1013,13 @@ async def get_member_performance(
 # ============================================================================
 
 @app.get("/api/v1/team/skills", tags=["Skills"])
-async def get_skills(db: Session = Depends(get_db)):
-    """Get all available skills"""
+async def get_skills(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get all available skills - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/team/skills")
     try:
         skills = db.query(Skill).all()
 
@@ -999,12 +1043,15 @@ async def get_skills(db: Session = Depends(get_db)):
 
 @app.post("/api/v1/team/skills", tags=["Skills"])
 async def create_skill(
-    name: str,
-    category: str,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    name: str = None,
+    category: str = None,
     description: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Create a new skill"""
+    """Create a new skill - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, "POST /api/v1/team/skills")
     try:
         # Check if skill already exists
         existing = db.query(Skill).filter(Skill.name == name).first()
