@@ -121,8 +121,8 @@ services:
   # 1. Auth Service (Port 8001)
   auth-service:
     build:
-      context: ./production-services/auth-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: auth-service/Dockerfile
     container_name: auth-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -148,8 +148,8 @@ services:
   # 2. Ticket Service (Port 8002)
   ticket-service:
     build:
-      context: ./production-services/ticket-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: ticket-service/Dockerfile
     container_name: ticket-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -179,8 +179,8 @@ services:
   # 3. Team Service (Port 8003)
   team-service:
     build:
-      context: ./production-services/team-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: team-service/Dockerfile
     container_name: team-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -205,8 +205,8 @@ services:
   # 4. SLA Service (Port 8004)
   sla-service:
     build:
-      context: ./production-services/sla-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: sla-service/Dockerfile
     container_name: sla-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -231,8 +231,8 @@ services:
   # 5. Workload Service (Port 8005)
   workload-service:
     build:
-      context: ./production-services/workload-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: workload-service/Dockerfile
     container_name: workload-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -256,8 +256,8 @@ services:
   # 6. Analytics Service (Port 8006)
   analytics-service:
     build:
-      context: ./production-services/analytics-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: analytics-service/Dockerfile
     container_name: analytics-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -278,8 +278,8 @@ services:
   # 7. Escalation Service (Port 8007)
   escalation-service:
     build:
-      context: ./production-services/escalation-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: escalation-service/Dockerfile
     container_name: escalation-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -300,8 +300,8 @@ services:
   # 8. Collaboration Service (Port 8008)
   collaboration-service:
     build:
-      context: ./production-services/collaboration-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: collaboration-service/Dockerfile
     container_name: collaboration-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -322,8 +322,8 @@ services:
   # 9. Integration Service (Port 8009)
   integration-service:
     build:
-      context: ./production-services/integration-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: integration-service/Dockerfile
     container_name: integration-service
     environment:
       REDMINE_BASE_URL: ${REDMINE_BASE_URL}
@@ -344,8 +344,8 @@ services:
   # 10. Scheduling Service (Port 8010)
   scheduling-service:
     build:
-      context: ./production-services/scheduling-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: scheduling-service/Dockerfile
     container_name: scheduling-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
@@ -367,8 +367,8 @@ services:
   # Note: Work sessions are handled in ticket-service
   project-service:
     build:
-      context: ./production-services/project-service
-      dockerfile: Dockerfile
+      context: ./production-services
+      dockerfile: project-service/Dockerfile
     container_name: project-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
