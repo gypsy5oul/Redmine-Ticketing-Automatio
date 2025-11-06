@@ -1492,6 +1492,114 @@ async def get_ticket_activities(
 
 
 # ============================================================================
+# CACHE MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/api/v1/metrics/cache", tags=["Cache"])
+async def get_cache_metrics():
+    """
+    Get comprehensive cache performance metrics
+
+    Source: /backend/app/main.py:168-198
+
+    Returns Redis cache statistics and metrics
+    """
+    try:
+        # Get Redis info
+        try:
+            redis_info = redis_client.info('memory')
+            cache_size_mb = round(redis_info.get('used_memory', 0) / 1024 / 1024, 2)
+            redis_keys = redis_client.dbsize()
+            redis_connected = True
+        except Exception as e:
+            logger.warning(f"Redis connection failed: {e}")
+            cache_size_mb = 0
+            redis_keys = 0
+            redis_connected = False
+
+        logger.info(f"✅ Cache metrics retrieved: {cache_size_mb}MB, {redis_keys} keys")
+
+        return {
+            "redis": {
+                "connected": redis_connected,
+                "memory_mb": cache_size_mb,
+                "total_keys": redis_keys,
+                "max_memory": redis_info.get('maxmemory', 0) if redis_connected else 0,
+                "eviction_policy": redis_info.get('maxmemory_policy', 'unknown') if redis_connected else 'unknown'
+            },
+            "cache_health": "healthy" if redis_connected else "disconnected",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to get cache metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/cache/clear", tags=["Cache"])
+async def clear_cache(cache_type: str = Query("all", description="Type of cache to clear")):
+    """
+    Clear cache by type
+
+    Source: /backend/app/main.py:201-245
+
+    Args:
+        cache_type: Type of cache to clear (llm, query, sla, workload, analytics, all)
+    """
+    try:
+        patterns = {
+            "llm": "llm:cache:*",
+            "query": "query:*",
+            "sla": "sla:*",
+            "workload": "workload:*",
+            "analytics": "analytics:*",
+            "collaborators": "collaborators:*",
+            "dashboard": "dashboard:*",
+            "all": "*"
+        }
+
+        if cache_type not in patterns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid cache_type. Must be one of: {list(patterns.keys())}"
+            )
+
+        pattern = patterns[cache_type]
+        cleared_count = 0
+
+        try:
+            # Scan and delete matching keys
+            keys = list(redis_client.scan_iter(match=pattern))
+            if keys:
+                cleared_count = redis_client.delete(*keys)
+
+            logger.info(f"✅ Cleared {cleared_count} cache keys with pattern '{pattern}'")
+
+            return {
+                "success": True,
+                "cache_type": cache_type,
+                "pattern": pattern,
+                "keys_cleared": cleared_count,
+                "cleared_at": datetime.now().isoformat()
+            }
+
+        except Exception as e:
+            logger.error(f"❌ Failed to clear cache: {e}")
+            return {
+                "success": False,
+                "cache_type": cache_type,
+                "error": str(e),
+                "note": "Cache clear failed - check Redis connection"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Cache clear endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # SERVER STARTUP
 # ============================================================================
 
