@@ -1,24 +1,23 @@
-version: '3.8'
-
 services:
   # ============================================================================
-  # Shared Infrastructure (PostgreSQL, Redis, RabbitMQ)
+  # Infrastructure Services
   # ============================================================================
 
   postgres:
     image: postgres:15-alpine
-    container_name: devops-tickets-db
+    container_name: devops-tickets-postgres
     environment:
-      POSTGRES_DB: devops_tickets
-      POSTGRES_USER: devops_user
+      POSTGRES_DB: ${POSTGRES_DB:-devops_tickets}
+      POSTGRES_USER: ${POSTGRES_USER:-devops_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_password_change_this}
       PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: ${TZ:-Asia/Kolkata}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U devops_user"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devops_user}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -30,6 +29,8 @@ services:
     image: redis:7-alpine
     container_name: devops-tickets-redis
     command: redis-server --appendonly yes
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
     volumes:
       - redis_data:/data
     ports:
@@ -43,19 +44,21 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  rabbitmq:
-    image: rabbitmq:3.12-management-alpine
-    container_name: devops-tickets-rabbitmq
+  # Kong Database (Separate PostgreSQL for Kong)
+  kong-database:
+    image: postgres:15-alpine
+    container_name: kong-database
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-devops}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-devops_password}
-    ports:
-      - "5672:5672"   # AMQP
-      - "15672:15672" # Management UI
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: ${KONG_PG_PASSWORD:-kong_password_change_this}
+      TZ: ${TZ:-Asia/Kolkata}
     volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      - kong_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      test: ["CMD-SHELL", "pg_isready -U kong"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -63,78 +66,105 @@ services:
       - microservices-network
     restart: unless-stopped
 
-  # ============================================================================
-  # API Gateway (Kong)
-  # ============================================================================
-
-  kong-database:
-    image: postgres:15-alpine
-    container_name: kong-db
-    environment:
-      POSTGRES_DB: kong
-      POSTGRES_USER: kong
-      POSTGRES_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
-    volumes:
-      - kong_data:/var/lib/postgresql/data
-    networks:
-      - microservices-network
-    restart: unless-stopped
-
+  # Kong Migrations (Run once to initialize Kong database)
   kong-migrations:
-    image: kong:3.4-alpine
+    image: kong:3.4
     container_name: kong-migrations
     command: kong migrations bootstrap
     environment:
       KONG_DATABASE: postgres
       KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
       KONG_PG_USER: kong
-      KONG_PG_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong_password_change_this}
+      KONG_PG_DATABASE: kong
     depends_on:
-      - kong-database
+      kong-database:
+        condition: service_healthy
     networks:
       - microservices-network
     restart: on-failure
 
+  # Kong API Gateway
   kong:
-    image: kong:3.4-alpine
-    container_name: api-gateway
+    image: kong:3.4
+    container_name: kong-gateway
     environment:
       KONG_DATABASE: postgres
       KONG_PG_HOST: kong-database
+      KONG_PG_PORT: 5432
       KONG_PG_USER: kong
-      KONG_PG_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
+      KONG_PG_PASSWORD: ${KONG_PG_PASSWORD:-kong_password_change_this}
+      KONG_PG_DATABASE: kong
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_LISTEN: 0.0.0.0:8444
+      KONG_PROXY_LISTEN: 0.0.0.0:8000
     ports:
-      - "8000:8000"  # Proxy (external traffic)
-      - "8001:8001"  # Admin API
+      - "8000:8000"   # Kong Proxy (Main entry point for API)
+      - "8443:8443"   # Kong Proxy SSL
+      - "8444:8444"   # Kong Admin API
+      - "8445:8445"   # Kong Admin API SSL
     depends_on:
-      - kong-database
-      - kong-migrations
+      kong-database:
+        condition: service_healthy
+      kong-migrations:
+        condition: service_completed_successfully
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: devops-tickets-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-devops_user}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-devops_password_change_this}
+      TZ: ${TZ:-Asia/Kolkata}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"   # AMQP protocol
+      - "15672:15672" # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     networks:
       - microservices-network
     restart: unless-stopped
 
   # ============================================================================
-  # Microservices
+  # Microservices (All 11 Services)
   # ============================================================================
 
-  # Auth Service (Port 8101)
+  # 1. Auth Service (Port 8001)
   auth-service:
     build:
-      context: ./services/auth-service
+      context: ./production-services/auth-service
       dockerfile: Dockerfile
     container_name: auth-service
     environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      SERVICE_PORT: 8001
     ports:
-      - "8101:8101"
+      - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,68 +173,93 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # Team Service (Port 8103)
-  team-service:
-    build:
-      context: ./services/team-service
-      dockerfile: Dockerfile
-    container_name: team-service
-    environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
-    ports:
-      - "8103:8103"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - microservices-network
-    restart: unless-stopped
-
-  # Ticket Service (Port 8102)
+  # 2. Ticket Service (Port 8002)
   ticket-service:
     build:
-      context: ./services/ticket-service
+      context: ./production-services/ticket-service
       dockerfile: Dockerfile
     container_name: ticket-service
     environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
-      TEAM_SERVICE_URL: "http://team-service:8103"
-      SLA_SERVICE_URL: "http://sla-service:8104"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      REDMINE_BASE_URL: ${REDMINE_BASE_URL}
+      REDMINE_API_KEY: ${REDMINE_API_KEY}
+      LLM_ENABLED: ${LLM_ENABLED:-true}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      SERVICE_PORT: 8002
     ports:
-      - "8102:8102"
+      - "8002:8002"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      team-service:
-        condition: service_started
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # SLA Service (Port 8104)
+  # 3. Team Service (Port 8003)
+  team-service:
+    build:
+      context: ./production-services/team-service
+      dockerfile: Dockerfile
+    container_name: team-service
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SERVICE_PORT: 8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 4. SLA Service (Port 8004)
   sla-service:
     build:
-      context: ./services/sla-service
+      context: ./production-services/sla-service
       dockerfile: Dockerfile
     container_name: sla-service
     environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      SECRET_KEY: ${SECRET_KEY}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SERVICE_PORT: 8004
     ports:
-      - "8104:8104"
+      - "8004:8004"
     depends_on:
       postgres:
         condition: service_healthy
@@ -213,21 +268,27 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # Workload Service (Port 8105)
+  # 5. Workload Service (Port 8005)
   workload-service:
     build:
-      context: ./services/workload-service
+      context: ./production-services/workload-service
       dockerfile: Dockerfile
     container_name: workload-service
     environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
-      TEAM_SERVICE_URL: "http://team-service:8103"
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      SERVICE_PORT: 8005
     ports:
-      - "8105:8105"
+      - "8005:8005"
     depends_on:
       postgres:
         condition: service_healthy
@@ -236,53 +297,164 @@ services:
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # Analytics Service (Port 8106)
+  # 6. Analytics Service (Port 8006)
   analytics-service:
     build:
-      context: ./services/analytics-service
+      context: ./production-services/analytics-service
       dockerfile: Dockerfile
     container_name: analytics-service
     environment:
-      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
-      SECRET_KEY: "${SECRET_KEY}"
-      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
-      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
-      LLM_BASE_URL: "${LLM_BASE_URL:-http://10.0.6.31:8000/v1}"
-      LLM_MODEL: "${LLM_MODEL:-qwen2.5-coder-32b}"
+      DATABASE_URL: ${DATABASE_URL}
+      SERVICE_PORT: 8006
     ports:
-      - "8106:8106"
+      - "8006:8006"
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 7. Escalation Service (Port 8007)
+  escalation-service:
+    build:
+      context: ./production-services/escalation-service
+      dockerfile: Dockerfile
+    container_name: escalation-service
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SERVICE_PORT: 8007
+    ports:
+      - "8007:8007"
+    depends_on:
+      postgres:
         condition: service_healthy
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8007/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-  # Frontend (unchanged)
-  frontend:
+  # 8. Collaboration Service (Port 8008)
+  collaboration-service:
     build:
-      context: ../frontend
+      context: ./production-services/collaboration-service
       dockerfile: Dockerfile
-    container_name: devops-tickets-frontend
+    container_name: collaboration-service
     environment:
-      VITE_API_BASE_URL: "http://10.0.2.121:8000"  # API Gateway
-      VITE_WS_BASE_URL: "ws://10.0.2.121:8000"
+      DATABASE_URL: ${DATABASE_URL}
+      SERVICE_PORT: 8008
     ports:
-      - "3000:80"
+      - "8008:8008"
     depends_on:
-      - kong
+      postgres:
+        condition: service_healthy
     networks:
       - microservices-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8008/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 9. Integration Service (Port 8009)
+  integration-service:
+    build:
+      context: ./production-services/integration-service
+      dockerfile: Dockerfile
+    container_name: integration-service
+    environment:
+      REDMINE_BASE_URL: ${REDMINE_BASE_URL}
+      REDMINE_API_KEY: ${REDMINE_API_KEY}
+      SERVICE_PORT: 8009
+    ports:
+      - "8009:8009"
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8009/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 10. Scheduling Service (Port 8010)
+  scheduling-service:
+    build:
+      context: ./production-services/scheduling-service
+      dockerfile: Dockerfile
+    container_name: scheduling-service
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SERVICE_PORT: 8010
+    ports:
+      - "8010:8010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8010/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 11. Work Session Service (Port 8011)
+  work-session-service:
+    build:
+      context: ./production-services/work-session-service
+      dockerfile: Dockerfile
+    container_name: work-session-service
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SERVICE_PORT: 8011
+    ports:
+      - "8011:8011"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8011/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 volumes:
   postgres_data:
+    driver: local
   redis_data:
-  rabbitmq_data:
+    driver: local
   kong_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
 
 networks:
   microservices-network:
