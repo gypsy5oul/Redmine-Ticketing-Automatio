@@ -363,12 +363,13 @@ services:
       retries: 3
       start_period: 40s
 
-  # 11. Work Session Service (Port 8011)
-  work-session-service:
+  # 11. Project Service (Port 8011)
+  # Note: Work sessions are handled in ticket-service
+  project-service:
     build:
-      context: ./production-services/work-session-service
+      context: ./production-services/project-service
       dockerfile: Dockerfile
-    container_name: work-session-service
+    container_name: project-service
     environment:
       DATABASE_URL: ${DATABASE_URL}
       SERVICE_PORT: 8011
