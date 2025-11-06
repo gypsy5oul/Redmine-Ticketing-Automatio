@@ -1344,6 +1344,154 @@ async def get_ml_models_status():
 
 
 # ============================================================================
+# ACTIVITIES/AUDIT LOG ENDPOINTS (Phase 3)
+# ============================================================================
+
+@app.get("/api/v1/activities", tags=["Activities"])
+async def get_activities(
+    limit: int = Query(50, description="Maximum number of activities"),
+    hours: int = Query(24, description="Get activities from last N hours"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get recent activities for real-time feed
+
+    Source: /backend/app/main.py:2928-2958
+
+    Args:
+        limit: Maximum number of activities (default: 50)
+        hours: Get activities from last N hours (default: 24)
+
+    Returns:
+        List of recent activities
+    """
+    try:
+        from_time = datetime.now() - timedelta(hours=hours)
+
+        # Get recent activities
+        activities = (
+            db.query(Activity)
+            .filter(Activity.created_at >= from_time)
+            .order_by(desc(Activity.created_at))
+            .limit(limit)
+            .all()
+        )
+
+        # Format activities
+        activity_list = []
+        for activity in activities:
+            # Get ticket details if associated
+            ticket_info = None
+            if activity.ticket_id:
+                ticket = db.query(TicketHistory).filter(
+                    TicketHistory.id == activity.ticket_id
+                ).first()
+                if ticket:
+                    ticket_info = {
+                        "id": ticket.id,
+                        "redmine_ticket_id": ticket.redmine_ticket_id,
+                        "subject": ticket.subject,
+                        "status": _session_type_to_str(ticket.status),
+                        "priority": _session_type_to_str(ticket.priority)
+                    }
+
+            activity_list.append({
+                "id": activity.id,
+                "type": _session_type_to_str(activity.activity_type),
+                "title": activity.title,
+                "description": activity.description,
+                "ticket": ticket_info,
+                "user_id": activity.user_id,
+                "metadata": activity.metadata,
+                "created_at": activity.created_at.isoformat()
+            })
+
+        logger.info(f"✅ Retrieved {len(activity_list)} activities from last {hours} hours")
+
+        return {
+            "success": True,
+            "count": len(activity_list),
+            "activities": activity_list,
+            "timeframe_hours": hours
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch activities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/activities/ticket/{ticket_id}", tags=["Activities"])
+async def get_ticket_activities(
+    ticket_id: int,
+    limit: int = Query(20, description="Maximum number of activities"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get activities for a specific ticket
+
+    Source: /backend/app/main.py:2961-2983
+
+    Args:
+        ticket_id: Ticket ID (database ID, not redmine_ticket_id)
+        limit: Maximum number of activities (default: 20)
+
+    Returns:
+        List of activities for the ticket
+    """
+    try:
+        # Verify ticket exists
+        ticket = db.query(TicketHistory).filter(
+            TicketHistory.id == ticket_id
+        ).first()
+
+        if not ticket:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        # Get activities for this ticket
+        activities = (
+            db.query(Activity)
+            .filter(Activity.ticket_id == ticket_id)
+            .order_by(desc(Activity.created_at))
+            .limit(limit)
+            .all()
+        )
+
+        # Format activities
+        activity_list = []
+        for activity in activities:
+            activity_list.append({
+                "id": activity.id,
+                "type": _session_type_to_str(activity.activity_type),
+                "title": activity.title,
+                "description": activity.description,
+                "user_id": activity.user_id,
+                "metadata": activity.metadata,
+                "created_at": activity.created_at.isoformat()
+            })
+
+        logger.info(f"✅ Retrieved {len(activity_list)} activities for ticket {ticket_id}")
+
+        return {
+            "success": True,
+            "ticket_id": ticket_id,
+            "ticket": {
+                "id": ticket.id,
+                "redmine_ticket_id": ticket.redmine_ticket_id,
+                "subject": ticket.subject,
+                "status": _session_type_to_str(ticket.status)
+            },
+            "count": len(activity_list),
+            "activities": activity_list
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to fetch ticket activities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
 # SERVER STARTUP
 # ============================================================================
 
