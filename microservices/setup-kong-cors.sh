@@ -34,10 +34,22 @@ echo "Configuring CORS plugin..."
 
 CORS_RESPONSE=$(curl -s -X POST http://localhost:8444/plugins \
   --data "name=cors" \
-  --data "config.origins=http://localhost:3000,http://localhost:5173,http://10.0.2.121:3000,http://10.0.2.121:5173" \
-  --data "config.methods=GET,POST,PUT,DELETE,PATCH,OPTIONS" \
-  --data "config.headers=Accept,Authorization,Content-Type,X-Requested-With" \
-  --data "config.exposed_headers=Authorization,X-Total-Count" \
+  --data "config.origins=http://localhost:3000" \
+  --data "config.origins=http://localhost:5173" \
+  --data "config.origins=http://10.0.2.121:3000" \
+  --data "config.origins=http://10.0.2.121:5173" \
+  --data "config.methods=GET" \
+  --data "config.methods=POST" \
+  --data "config.methods=PUT" \
+  --data "config.methods=DELETE" \
+  --data "config.methods=PATCH" \
+  --data "config.methods=OPTIONS" \
+  --data "config.headers=Accept" \
+  --data "config.headers=Authorization" \
+  --data "config.headers=Content-Type" \
+  --data "config.headers=X-Requested-With" \
+  --data "config.exposed_headers=Authorization" \
+  --data "config.exposed_headers=X-Total-Count" \
   --data "config.credentials=true" \
   --data "config.max_age=3600" 2>&1)
 
