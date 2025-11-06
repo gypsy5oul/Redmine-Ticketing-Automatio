@@ -89,6 +89,37 @@ async def get_user(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/v1/redmine/sync-statuses", tags=["Redmine"])
+async def sync_redmine_statuses():
+    """
+    Synchronize ticket statuses with Redmine
+
+    Source: /backend/app/main.py:2378-2391
+
+    This endpoint syncs local ticket statuses with Redmine.
+    In the monolithic app, this calls TicketProcessor.sync_ticket_statuses_with_redmine()
+
+    Note: Full implementation requires TicketProcessor service integration
+    """
+    try:
+        logger.info("🔄 Redmine status sync requested")
+
+        # In full implementation, this would:
+        # 1. Query all tickets with pending sync
+        # 2. Update Redmine via API for each ticket
+        # 3. Mark tickets as synced
+
+        return {
+            "success": True,
+            "message": "Redmine status sync completed (stub)",
+            "synced_count": 0,
+            "note": "Full implementation requires database access and TicketProcessor service"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to sync Redmine statuses: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=settings.SERVICE_PORT, reload=True)

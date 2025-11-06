@@ -162,6 +162,35 @@ async def request_leave(data: dict, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/v1/scheduler/status", tags=["Scheduler"])
+async def get_scheduler_status():
+    """
+    Get status of background scheduler jobs
+
+    Source: /backend/app/main.py:2891-2921
+
+    Returns information about scheduled background jobs (if scheduler is running)
+    """
+    try:
+        logger.info("📊 Scheduler status requested")
+
+        # In full implementation with APScheduler:
+        # - Check if scheduler is running
+        # - Get list of all jobs
+        # - Return job details (next_run, trigger, etc.)
+
+        return {
+            "running": False,
+            "jobs": [],
+            "total_jobs": 0,
+            "message": "Scheduler not initialized in microservice",
+            "note": "Background jobs are managed by individual services in microservice architecture"
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Failed to get scheduler status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=settings.SERVICE_PORT, reload=True)
