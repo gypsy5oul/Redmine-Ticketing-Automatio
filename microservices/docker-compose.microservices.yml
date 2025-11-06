@@ -1,0 +1,289 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # Shared Infrastructure (PostgreSQL, Redis, RabbitMQ)
+  # ============================================================================
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: devops-tickets-db
+    environment:
+      POSTGRES_DB: devops_tickets
+      POSTGRES_USER: devops_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devops_password_change_this}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devops_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: devops-tickets-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: devops-tickets-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-devops}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-devops_password}
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # API Gateway (Kong)
+  # ============================================================================
+
+  kong-database:
+    image: postgres:15-alpine
+    container_name: kong-db
+    environment:
+      POSTGRES_DB: kong
+      POSTGRES_USER: kong
+      POSTGRES_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
+    volumes:
+      - kong_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  kong-migrations:
+    image: kong:3.4-alpine
+    container_name: kong-migrations
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
+    depends_on:
+      - kong-database
+    networks:
+      - microservices-network
+    restart: on-failure
+
+  kong:
+    image: kong:3.4-alpine
+    container_name: api-gateway
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: ${KONG_DB_PASSWORD:-kong_password}
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+    ports:
+      - "8000:8000"  # Proxy (external traffic)
+      - "8001:8001"  # Admin API
+    depends_on:
+      - kong-database
+      - kong-migrations
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # ============================================================================
+  # Microservices
+  # ============================================================================
+
+  # Auth Service (Port 8101)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+    ports:
+      - "8101:8101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Team Service (Port 8103)
+  team-service:
+    build:
+      context: ./services/team-service
+      dockerfile: Dockerfile
+    container_name: team-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+    ports:
+      - "8103:8103"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Ticket Service (Port 8102)
+  ticket-service:
+    build:
+      context: ./services/ticket-service
+      dockerfile: Dockerfile
+    container_name: ticket-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+      TEAM_SERVICE_URL: "http://team-service:8103"
+      SLA_SERVICE_URL: "http://sla-service:8104"
+    ports:
+      - "8102:8102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      team-service:
+        condition: service_started
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # SLA Service (Port 8104)
+  sla-service:
+    build:
+      context: ./services/sla-service
+      dockerfile: Dockerfile
+    container_name: sla-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+    ports:
+      - "8104:8104"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Workload Service (Port 8105)
+  workload-service:
+    build:
+      context: ./services/workload-service
+      dockerfile: Dockerfile
+    container_name: workload-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+      TEAM_SERVICE_URL: "http://team-service:8103"
+    ports:
+      - "8105:8105"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Analytics Service (Port 8106)
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+      dockerfile: Dockerfile
+    container_name: analytics-service
+    environment:
+      DATABASE_URL: "postgresql://devops_user:${POSTGRES_PASSWORD:-devops_password_change_this}@postgres:5432/devops_tickets"
+      SECRET_KEY: "${SECRET_KEY}"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      CORS_ORIGINS: "http://localhost:3000,http://10.0.2.121:3000"
+      LLM_BASE_URL: "${LLM_BASE_URL:-http://10.0.6.31:8000/v1}"
+      LLM_MODEL: "${LLM_MODEL:-qwen2.5-coder-32b}"
+    ports:
+      - "8106:8106"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+  # Frontend (unchanged)
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: devops-tickets-frontend
+    environment:
+      VITE_API_BASE_URL: "http://10.0.2.121:8000"  # API Gateway
+      VITE_WS_BASE_URL: "ws://10.0.2.121:8000"
+    ports:
+      - "3000:80"
+    depends_on:
+      - kong
+    networks:
+      - microservices-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  kong_data:
+
+networks:
+  microservices-network:
+    driver: bridge

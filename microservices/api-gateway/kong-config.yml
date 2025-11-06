@@ -1,0 +1,147 @@
+_format_version: "3.0"
+
+# ============================================================================
+# Kong API Gateway Configuration
+# Routes external traffic to microservices
+# ============================================================================
+
+services:
+  # Auth Service
+  - name: auth-service
+    url: http://auth-service:8101
+    routes:
+      - name: auth-routes
+        paths:
+          - /api/v1/auth
+        strip_path: false
+
+  # Team Service
+  - name: team-service
+    url: http://team-service:8103
+    routes:
+      - name: team-routes
+        paths:
+          - /api/v1/team
+        strip_path: false
+
+  # Ticket Service
+  - name: ticket-service
+    url: http://ticket-service:8102
+    routes:
+      - name: ticket-routes
+        paths:
+          - /api/v1/tickets
+        strip_path: false
+      - name: comment-routes
+        paths:
+          - /api/v1/comments
+        strip_path: false
+
+  # SLA Service
+  - name: sla-service
+    url: http://sla-service:8104
+    routes:
+      - name: sla-routes
+        paths:
+          - /api/v1/sla
+        strip_path: false
+
+  # Workload Service
+  - name: workload-service
+    url: http://workload-service:8105
+    routes:
+      - name: workload-routes
+        paths:
+          - /api/v1/workload
+        strip_path: false
+
+  # Analytics Service
+  - name: analytics-service
+    url: http://analytics-service:8106
+    routes:
+      - name: analytics-routes
+        paths:
+          - /api/v1/analytics
+        strip_path: false
+      - name: ml-routes
+        paths:
+          - /api/v1/ml
+        strip_path: false
+      - name: dashboard-routes
+        paths:
+          - /api/v1/dashboard
+        strip_path: false
+
+  # Escalation Service
+  - name: escalation-service
+    url: http://escalation-service:8107
+    routes:
+      - name: escalation-routes
+        paths:
+          - /api/v1/escalation
+        strip_path: false
+
+  # Integration Service
+  - name: integration-service
+    url: http://integration-service:8108
+    routes:
+      - name: redmine-routes
+        paths:
+          - /api/v1/redmine
+        strip_path: false
+      - name: integration-routes
+        paths:
+          - /api/v1/integration
+        strip_path: false
+
+# ============================================================================
+# Global Plugins
+# ============================================================================
+
+plugins:
+  # Rate Limiting (prevent abuse)
+  - name: rate-limiting
+    config:
+      minute: 100
+      hour: 2000
+      policy: local
+
+  # CORS
+  - name: cors
+    config:
+      origins:
+        - "http://localhost:3000"
+        - "http://10.0.2.121:3000"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - PATCH
+        - OPTIONS
+      headers:
+        - Accept
+        - Authorization
+        - Content-Type
+      credentials: true
+      max_age: 3600
+
+  # Request/Response Logging
+  - name: http-log
+    config:
+      http_endpoint: http://analytics-service:8106/logs
+      method: POST
+      timeout: 1000
+      keepalive: 1000
+
+  # Prometheus Metrics
+  - name: prometheus
+    config:
+      per_consumer: true
+
+# ============================================================================
+# Authentication Plugin (JWT)
+# ============================================================================
+
+# Apply JWT verification to protected routes
+# This will be configured programmatically via Kong Admin API
