@@ -17,14 +17,27 @@ Endpoints:
 """
 
 import os
+import sys
 import enum
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any
 
 # FastAPI
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings
+
+# Add shared module to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Import shared auth and logging utilities
+from shared.auth_utils import (
+    setup_logging,
+    log_request,
+    get_current_user,
+    require_admin,
+    User
+)
 
 # Database
 from sqlalchemy import (
@@ -357,6 +370,9 @@ class SLAManager:
 
 app = FastAPI(title="SLA Service", description="SLA policy management and tracking", version="1.0.0")
 
+# Setup enhanced logging with request tracking
+logger = setup_logging("sla-service", os.getenv("LOG_LEVEL", "INFO"))
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -370,8 +386,13 @@ async def health_check():
     return {"service": settings.SERVICE_NAME, "status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/api/v1/sla/policies", tags=["SLA"])
-async def get_policies(db: Session = Depends(get_db)):
-    """List all SLA policies"""
+async def get_policies(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """List all SLA policies - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/sla/policies")
     try:
         policies = db.query(SLAPolicy).filter(SLAPolicy.active == True).all()
         return {
@@ -395,8 +416,14 @@ async def get_policies(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/sla/policies", tags=["SLA"])
-async def create_policy(policy_data: dict, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    """Create SLA policy (admin only)"""
+async def create_policy(
+    user: User = Depends(require_admin),
+    request: Request = None,
+    policy_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Create SLA policy - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, "POST /api/v1/sla/policies")
     try:
         policy = SLAPolicy(
             priority=policy_data.get("priority"),
@@ -405,7 +432,7 @@ async def create_policy(policy_data: dict, db: Session = Depends(get_db), curren
             escalation_time_minutes=policy_data.get("escalation_time_minutes"),
             environment=policy_data.get("environment"),
             business_hours_only=policy_data.get("business_hours_only", True),
-            created_by=current_user.username
+            created_by=user.username
         )
 
         db.add(policy)
@@ -421,8 +448,15 @@ async def create_policy(policy_data: dict, db: Session = Depends(get_db), curren
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/v1/sla/policies/{policy_id}", tags=["SLA"])
-async def update_policy(policy_id: int, policy_data: dict, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
-    """Update SLA policy"""
+async def update_policy(
+    policy_id: int,
+    user: User = Depends(require_admin),
+    request: Request = None,
+    policy_data: dict = None,
+    db: Session = Depends(get_db)
+):
+    """Update SLA policy - Requires: Admin or Super Admin role"""
+    log_request(logger, request, user.id, f"PUT /api/v1/sla/policies/{policy_id}")
     try:
         policy = db.query(SLAPolicy).filter(SLAPolicy.id == policy_id).first()
         if not policy:
@@ -447,8 +481,14 @@ async def update_policy(policy_id: int, policy_data: dict, db: Session = Depends
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/sla/tracker/{ticket_id}", tags=["SLA"])
-async def get_sla_status(ticket_id: int, db: Session = Depends(get_db)):
-    """Get SLA status for ticket"""
+async def get_sla_status(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get SLA status for ticket - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"GET /api/v1/sla/tracker/{ticket_id}")
     try:
         tracker = db.query(SLATracker).filter(SLATracker.ticket_id == ticket_id).first()
         if not tracker:
@@ -477,8 +517,13 @@ async def get_sla_status(ticket_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/sla/at-risk", tags=["SLA"])
-async def get_at_risk_tickets(db: Session = Depends(get_db)):
-    """Get tickets at risk of SLA breach"""
+async def get_at_risk_tickets(
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Get tickets at risk of SLA breach - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, "GET /api/v1/sla/at-risk")
     try:
         trackers = db.query(SLATracker).filter(
             SLATracker.status.in_([SLAStatus.AT_RISK, SLAStatus.CRITICAL])
@@ -503,8 +548,14 @@ async def get_at_risk_tickets(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/sla/{ticket_id}/pause", tags=["SLA"])
-async def pause_sla(ticket_id: int, db: Session = Depends(get_db)):
-    """Pause SLA tracking"""
+async def pause_sla(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Pause SLA tracking - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"POST /api/v1/sla/{ticket_id}/pause")
     try:
         tracker = db.query(SLATracker).filter(SLATracker.ticket_id == ticket_id).first()
         if not tracker:
@@ -525,8 +576,14 @@ async def pause_sla(ticket_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/sla/{ticket_id}/resume", tags=["SLA"])
-async def resume_sla(ticket_id: int, db: Session = Depends(get_db)):
-    """Resume SLA tracking"""
+async def resume_sla(
+    ticket_id: int,
+    user: User = Depends(get_current_user),
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    """Resume SLA tracking - Requires: Any authenticated user"""
+    log_request(logger, request, user.id, f"POST /api/v1/sla/{ticket_id}/resume")
     try:
         tracker = db.query(SLATracker).filter(SLATracker.ticket_id == ticket_id).first()
         if not tracker:
