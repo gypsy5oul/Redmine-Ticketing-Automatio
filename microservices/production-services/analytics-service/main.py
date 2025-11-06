@@ -567,6 +567,316 @@ async def get_dashboard_simple(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================================
+# ML PREDICTION ENDPOINTS (Phase 1B)
+# ============================================================================
+
+class SimpleLLMPredictor:
+    """Simplified ML predictor using rule-based fallback logic"""
+
+    @staticmethod
+    def predict_category(ticket: dict) -> dict:
+        """Predict ticket category using keyword matching"""
+        subject = ticket.get('subject', '').lower()
+        description = ticket.get('description', '').lower()
+        text = f"{subject} {description}"
+
+        # Simple keyword matching
+        if any(kw in text for kw in ['kubernetes', 'k8s', 'pod', 'deployment', 'helm']):
+            category = 'kubernetes'
+        elif any(kw in text for kw in ['database', 'postgres', 'mysql', 'sql', 'mongodb']):
+            category = 'database'
+        elif any(kw in text for kw in ['cicd', 'ci/cd', 'pipeline', 'gitlab', 'jenkins', 'github']):
+            category = 'cicd'
+        elif any(kw in text for kw in ['network', 'firewall', 'dns', 'routing', 'vpn']):
+            category = 'network'
+        elif any(kw in text for kw in ['rabbitmq', 'kafka', 'redis', 'messaging', 'queue']):
+            category = 'messaging'
+        elif any(kw in text for kw in ['docker', 'container', 'image']):
+            category = 'container'
+        else:
+            category = 'application'
+
+        return {
+            "category": category,
+            "confidence": 0.65,
+            "probabilities": {category: 0.65},
+            "method": "rule_based"
+        }
+
+    @staticmethod
+    def predict_complexity(ticket: dict) -> dict:
+        """Predict ticket complexity based on priority and keywords"""
+        priority = ticket.get('priority', 'P3(Medium)')
+        subject = ticket.get('subject', '').lower()
+        description = ticket.get('description', '').lower()
+        text = f"{subject} {description}"
+
+        # Check for complexity indicators in text
+        complex_keywords = ['migration', 'upgrade', 'architecture', 'redesign', 'refactor']
+        critical_keywords = ['outage', 'down', 'critical', 'emergency', 'urgent']
+        simple_keywords = ['typo', 'minor', 'cosmetic', 'documentation', 'config']
+
+        # Base complexity on priority
+        if priority == 'P1(Critical)' or any(kw in text for kw in critical_keywords):
+            complexity = 'critical'
+            confidence = 0.75
+        elif priority == 'P2(High)' or any(kw in text for kw in complex_keywords):
+            complexity = 'complex'
+            confidence = 0.70
+        elif any(kw in text for kw in simple_keywords):
+            complexity = 'simple'
+            confidence = 0.65
+        else:
+            complexity = 'moderate'
+            confidence = 0.60
+
+        return {
+            "complexity": complexity,
+            "confidence": confidence,
+            "probabilities": {complexity: confidence},
+            "method": "rule_based"
+        }
+
+    @staticmethod
+    def predict_resolution_time(ticket: dict) -> dict:
+        """Predict resolution time based on priority and complexity"""
+        priority = ticket.get('priority', 'P3(Medium)')
+        subject = ticket.get('subject', '').lower()
+        description = ticket.get('description', '').lower()
+        text = f"{subject} {description}"
+
+        # Base estimation on priority
+        priority_hours = {
+            'P1(Critical)': 2.0,
+            'P2(High)': 4.0,
+            'P3(Medium)': 8.0,
+            'P4(Low)': 16.0,
+            'P5(Trivial)': 24.0
+        }
+
+        base_hours = priority_hours.get(priority, 8.0)
+
+        # Adjust based on complexity indicators
+        if any(kw in text for kw in ['migration', 'upgrade', 'architecture']):
+            estimated_hours = base_hours * 1.5
+        elif any(kw in text for kw in ['typo', 'minor', 'config']):
+            estimated_hours = base_hours * 0.5
+        else:
+            estimated_hours = base_hours
+
+        return {
+            "estimated_hours": round(estimated_hours, 1),
+            "confidence": 0.60,
+            "method": "rule_based",
+            "priority_based": True
+        }
+
+
+@app.post("/api/v1/ml/predict/category", tags=["Analytics", "ML"])
+async def predict_ticket_category(
+    subject: str,
+    description: str = "",
+    priority: str = "P3(Medium)"
+):
+    """
+    Predict ticket category using ML/rule-based logic
+
+    Source: /backend/app/main.py:1819-1844
+
+    Args:
+        subject: Ticket subject line
+        description: Ticket description (optional)
+        priority: Ticket priority (optional)
+
+    Returns:
+        {
+            "category": str,
+            "confidence": float,
+            "probabilities": dict,
+            "method": str
+        }
+    """
+    try:
+        ticket = {
+            "subject": subject,
+            "description": description,
+            "priority": priority
+        }
+
+        predictor = SimpleLLMPredictor()
+        result = predictor.predict_category(ticket)
+
+        logger.info(f"✅ Category prediction: {result['category']} (confidence: {result['confidence']})")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Category prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/ml/predict/complexity", tags=["Analytics", "ML"])
+async def predict_ticket_complexity(
+    subject: str,
+    description: str = "",
+    priority: str = "P3(Medium)"
+):
+    """
+    Predict ticket complexity using ML/rule-based logic
+
+    Source: /backend/app/main.py:1846-1872
+
+    Args:
+        subject: Ticket subject line
+        description: Ticket description (optional)
+        priority: Ticket priority (optional)
+
+    Returns:
+        {
+            "complexity": str,
+            "confidence": float,
+            "probabilities": dict,
+            "method": str
+        }
+    """
+    try:
+        ticket = {
+            "subject": subject,
+            "description": description,
+            "priority": priority
+        }
+
+        predictor = SimpleLLMPredictor()
+        result = predictor.predict_complexity(ticket)
+
+        logger.info(f"✅ Complexity prediction: {result['complexity']} (confidence: {result['confidence']})")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Complexity prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/ml/predict/resolution-time", tags=["Analytics", "ML"])
+async def predict_resolution_time(
+    subject: str,
+    description: str = "",
+    priority: str = "P3(Medium)"
+):
+    """
+    Predict ticket resolution time using ML/rule-based logic
+
+    Source: /backend/app/main.py:1875-1900
+
+    Args:
+        subject: Ticket subject line
+        description: Ticket description (optional)
+        priority: Ticket priority (optional)
+
+    Returns:
+        {
+            "estimated_hours": float,
+            "confidence": float,
+            "method": str
+        }
+    """
+    try:
+        ticket = {
+            "subject": subject,
+            "description": description,
+            "priority": priority
+        }
+
+        predictor = SimpleLLMPredictor()
+        result = predictor.predict_resolution_time(ticket)
+
+        logger.info(f"✅ Resolution time prediction: {result['estimated_hours']} hours (confidence: {result['confidence']})")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Resolution time prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/ml/predict/all", tags=["Analytics", "ML"])
+async def predict_all_ticket_attributes(
+    subject: str,
+    description: str = "",
+    priority: str = "P3(Medium)"
+):
+    """
+    Run all ML predictions at once for a ticket
+
+    Source: /backend/app/main.py:1903-1947
+
+    Args:
+        subject: Ticket subject line
+        description: Ticket description (optional)
+        priority: Ticket priority (optional)
+
+    Returns:
+        {
+            "category": {...},
+            "complexity": {...},
+            "resolution_time": {...},
+            "ticket_summary": {...}
+        }
+    """
+    try:
+        ticket = {
+            "subject": subject,
+            "description": description,
+            "priority": priority
+        }
+
+        predictor = SimpleLLMPredictor()
+
+        # Run all predictions
+        category = predictor.predict_category(ticket)
+        complexity = predictor.predict_complexity(ticket)
+        resolution = predictor.predict_resolution_time(ticket)
+
+        # Calculate average confidence
+        avg_confidence = round((
+            category.get("confidence", 0.5) +
+            complexity.get("confidence", 0.5) +
+            resolution.get("confidence", 0.5)
+        ) / 3, 2)
+
+        result = {
+            "category": category,
+            "complexity": complexity,
+            "resolution_time": resolution,
+            "ticket_summary": {
+                "subject": subject,
+                "predicted_category": category["category"],
+                "predicted_complexity": complexity["complexity"],
+                "predicted_hours": resolution["estimated_hours"],
+                "avg_confidence": avg_confidence
+            }
+        }
+
+        logger.info(
+            f"✅ All predictions complete: "
+            f"category={category['category']}, "
+            f"complexity={complexity['complexity']}, "
+            f"hours={resolution['estimated_hours']}"
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"❌ Combined prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================================
+# SERVER STARTUP
+# ============================================================================
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=settings.SERVICE_PORT, reload=True)
