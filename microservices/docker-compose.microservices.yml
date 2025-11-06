@@ -424,5 +424,7 @@ networks:
   microservices-network:
     driver: bridge
   # External network to connect to postgres and redis from old app
+  # Docker Compose prefixes network names with the project directory name
   devops-network:
+    name: redmine-automation-v3_devops-network
     external: true
